@@ -104,7 +104,11 @@ async function handleMessage(msg) {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  handleMessage(msg).then(sendResponse);
+  // Without the catch, an unexpected throw in any case above never calls
+  // sendResponse and the sender's await hangs forever.
+  handleMessage(msg)
+    .then(sendResponse)
+    .catch(() => sendResponse({ ok: false, message: 'Something went wrong.' }));
   return true; // keep the channel open for the async response
 });
 
@@ -122,7 +126,9 @@ async function flashBadge(tabId, title) {
   await chrome.action.setTitle({ tabId, title });
   setTimeout(() => {
     chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
-    chrome.action.setTitle({ tabId, title: 'Capture a Linear bug' }).catch(() => {});
+    // Empty string clears the per-tab override and falls back to the
+    // manifest's default_title, so the copy cannot drift out of sync.
+    chrome.action.setTitle({ tabId, title: '' }).catch(() => {});
   }, BADGE_MS);
 }
 
@@ -159,31 +165,21 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
-const TINY_PNG =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
-
-// Dev-only console hook. Off by default. To enable, run
-//   chrome.storage.local.set({ debugHooks: true })
-// then reload the extension and inspect the service worker.
-chrome.storage.local.get('debugHooks').then((out) => {
-  if (!out.debugHooks) return;
-  // @ts-ignore - augmenting the worker global for debugging
-  self.__debug = {
-    fetchViewer,
-    fetchProjects,
-    uploadImage,
-    createIssue,
-    buildDescription,
-    TINY_PNG,
-  };
-});
-
 /**
  * Issue creation runs over a port rather than a one-shot message so upload
  * progress can stream back to the modal.
  */
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'create-issue') return;
+
+  /** Posting to a port whose other end is gone throws; nobody is listening. */
+  const safePost = (/** @type {any} */ m) => {
+    try {
+      port.postMessage(m);
+    } catch {
+      /* receiver went away (tab closed or navigated) */
+    }
+  };
 
   port.onMessage.addListener(async (msg) => {
     if (msg?.type !== 'CREATE_ISSUE') return;
@@ -198,7 +194,7 @@ chrome.runtime.onConnect.addListener((port) => {
       // issued, so preparing the next upload before finishing this one can
       // expire the earlier URL. Do not convert this to Promise.all.
       for (let i = 0; i < payload.images.length; i++) {
-        port.postMessage({
+        safePost({
           type: 'PROGRESS',
           phase: 'upload',
           index: i + 1,
@@ -211,7 +207,7 @@ chrome.runtime.onConnect.addListener((port) => {
         assetUrls.push(url);
       }
 
-      port.postMessage({ type: 'PROGRESS', phase: 'create', index: 0, total: 0 });
+      safePost({ type: 'PROGRESS', phase: 'create', index: 0, total: 0 });
 
       const description = buildDescription({
         description: payload.description,
@@ -228,10 +224,10 @@ chrome.runtime.onConnect.addListener((port) => {
 
       await setStickyPrefs(payload.projectId, payload.teamId);
       await clearDraft(new URL(payload.pageUrl).origin);
-      port.postMessage({ type: 'DONE', identifier: issue.identifier, url: issue.url });
+      safePost({ type: 'DONE', identifier: issue.identifier, url: issue.url });
     } catch (err) {
       const e = /** @type {LinearError} */ (err);
-      port.postMessage({
+      safePost({
         type: 'ERROR',
         // || not ?? — an unexpected throw can carry an empty .message,
         // which ?? would pass through as a blank toast.

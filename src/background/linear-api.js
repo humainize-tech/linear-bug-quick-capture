@@ -46,7 +46,14 @@ export async function graphql(query, variables = {}) {
   }
 
   if (res.status === 401 || res.status === 403) {
-    throw new LinearError('Linear rejected the API key.', 'AUTH');
+    // The options page recommends a *scoped* key, so a 403 is more often a
+    // missing "Create issues" permission than a bad key. Naming only the key
+    // sends the user off to regenerate one that was fine. The 'AUTH' code is
+    // load-bearing — app.js keys its "Open settings" toast action off it.
+    throw new LinearError(
+      'Linear rejected the API key — it may be invalid, or missing the "Create issues" permission.',
+      'AUTH'
+    );
   }
 
   /** @type {any} */
