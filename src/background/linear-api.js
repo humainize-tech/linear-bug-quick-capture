@@ -115,3 +115,67 @@ export async function fetchProjects() {
       a.name.localeCompare(b.name)
     );
 }
+
+/**
+ * Upload one image to Linear's asset storage and return its permanent
+ * asset URL.
+ *
+ * The signed URL expires 60 seconds after `fileUpload` returns, and every
+ * header Linear hands back is part of the signature — omitting or
+ * re-casing any of them yields HTTP 403. So: prepare, then immediately PUT
+ * the raw bytes with those exact headers. Callers must never prepare a
+ * second upload before this one resolves.
+ *
+ * @param {string} dataUrl  "data:image/png;base64,..."
+ * @param {string} filename
+ * @returns {Promise<string>} assetUrl
+ */
+export async function uploadImage(dataUrl, filename) {
+  // fetch() on a data: URL is the cheapest way to raw bytes in a worker.
+  const blob = await (await fetch(dataUrl)).blob();
+  const contentType = blob.type || 'image/png';
+
+  const data = await graphql(
+    `
+      mutation FileUpload($contentType: String!, $filename: String!, $size: Int!) {
+        fileUpload(contentType: $contentType, filename: $filename, size: $size) {
+          success
+          uploadFile {
+            uploadUrl
+            assetUrl
+            headers { key value }
+          }
+        }
+      }
+    `,
+    { contentType, filename, size: blob.size }
+  );
+
+  const payload = data.fileUpload;
+  if (!payload?.success || !payload.uploadFile) {
+    throw new LinearError('Linear refused to prepare the upload.', 'UPLOAD');
+  }
+
+  const { uploadUrl, assetUrl, headers } = payload.uploadFile;
+
+  /** @type {Record<string, string>} */
+  const signed = {};
+  for (const h of headers ?? []) signed[h.key] = h.value;
+
+  let res;
+  try {
+    res = await fetch(uploadUrl, { method: 'PUT', headers: signed, body: blob });
+  } catch {
+    throw new LinearError('Could not reach Linear to upload the screenshot.', 'NETWORK');
+  }
+
+  if (!res.ok) {
+    const hint =
+      res.status === 403
+        ? ' The signed URL may have expired, or a required header was altered.'
+        : '';
+    throw new LinearError(`Screenshot upload failed (HTTP ${res.status}).${hint}`, 'UPLOAD');
+  }
+
+  return assetUrl;
+}
