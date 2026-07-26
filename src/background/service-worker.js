@@ -215,7 +215,9 @@ chrome.runtime.onConnect.addListener((port) => {
       const e = /** @type {LinearError} */ (err);
       port.postMessage({
         type: 'ERROR',
-        message: e.message ?? 'Something went wrong.',
+        // || not ?? — an unexpected throw can carry an empty .message,
+        // which ?? would pass through as a blank toast.
+        message: e.message || 'Something went wrong.',
         code: e.code ?? 'GRAPHQL',
       });
     }

@@ -129,6 +129,10 @@ export async function mount() {
         modal.setBusy('Saving…');
 
         const port = chrome.runtime.connect({ name: 'create-issue' });
+        // Tracks whether the save reached a real outcome, so the
+        // onDisconnect handler below can tell "the worker died mid-save"
+        // from "the port closed because we're finished with it".
+        let settled = false;
 
         port.onMessage.addListener((msg) => {
           if (msg.type === 'PROGRESS') {
@@ -140,12 +144,14 @@ export async function mount() {
             return;
           }
           if (msg.type === 'DONE') {
+            settled = true;
             port.disconnect();
             modal?.showSuccess(msg.identifier, msg.url);
             setTimeout(unmount, 3000);
             return;
           }
           if (msg.type === 'ERROR') {
+            settled = true;
             port.disconnect();
             modal?.setBusy(null);
             // Field values are untouched, so the user can fix and retry.
@@ -163,8 +169,20 @@ export async function mount() {
         });
 
         port.onDisconnect.addListener(() => {
-          // Fires if the worker was terminated mid-save.
-          if (modal) modal.setBusy(null);
+          // MV3 can kill an idle service worker at any moment, including
+          // mid-upload. Re-enabling Save silently would leave the user
+          // staring at a button with no idea whether the issue was created,
+          // which spec §7 forbids — every failure has to say something.
+          //
+          // The `settled` guard matters in the other direction too: after a
+          // DONE the worker has nothing left to do and may be killed
+          // immediately, which would otherwise paint an "interrupted" toast
+          // over the success panel.
+          if (settled) return;
+          modal?.setBusy(null);
+          modal?.showToast(
+            'Saving was interrupted before it finished. Check Linear for a partly created issue, then save again.'
+          );
         });
 
         port.postMessage({
