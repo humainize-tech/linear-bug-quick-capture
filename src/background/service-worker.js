@@ -17,6 +17,9 @@ import {
   setCachedProjects,
   getStickyPrefs,
   setStickyPrefs,
+  getDraft,
+  setDraft,
+  clearDraft,
 } from '../lib/storage.js';
 
 /**
@@ -58,12 +61,14 @@ async function handleMessage(msg) {
         }
       }
       const prefs = await getStickyPrefs();
+      const draft = await getDraft(msg.origin);
       return {
         ok: true,
         hasKey: true,
         projects,
         lastProjectId: prefs.lastProjectId,
         lastTeamId: prefs.lastTeamId,
+        draft,
       };
     }
 
@@ -83,6 +88,15 @@ async function handleMessage(msg) {
         };
       }
     }
+
+    case 'SAVE_DRAFT': {
+      const res = await setDraft(msg.origin, msg.draft);
+      return { ok: res.ok, reason: res.reason };
+    }
+
+    case 'DISCARD_DRAFT':
+      await clearDraft(msg.origin);
+      return { ok: true };
 
     default:
       return { ok: false, message: `Unknown message type: ${msg?.type}` };
@@ -210,6 +224,7 @@ chrome.runtime.onConnect.addListener((port) => {
       });
 
       await setStickyPrefs(payload.projectId, payload.teamId);
+      await clearDraft(new URL(payload.pageUrl).origin);
       port.postMessage({ type: 'DONE', identifier: issue.identifier, url: issue.url });
     } catch (err) {
       const e = /** @type {LinearError} */ (err);

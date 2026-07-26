@@ -16,6 +16,35 @@ let root = null;
 /** @type {ReturnType<typeof createModal>|null} */
 let modal = null;
 
+const DRAFT_DEBOUNCE_MS = 300;
+/** @type {ReturnType<typeof setTimeout>|undefined} */
+let draftTimer;
+
+function scheduleDraftSave() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(async () => {
+    if (!modal) return;
+    const values = modal.getValues();
+    const res = await chrome.runtime.sendMessage({
+      type: 'SAVE_DRAFT',
+      origin: location.origin,
+      draft: {
+        title: values.title,
+        description: values.description,
+        projectId: values.projectId,
+        teamId: values.teamId,
+        images: modal.getImages(),
+        updatedAt: Date.now(),
+      },
+    });
+    if (res && res.ok === false && res.reason === 'too-large') {
+      modal.showToast(
+        'Too many or too large screenshots to keep a draft. Save the bug now, or remove a screenshot.'
+      );
+    }
+  }, DRAFT_DEBOUNCE_MS);
+}
+
 export function unmount() {
   document.removeEventListener('keydown', onKeydown, true);
   host?.remove();
@@ -110,12 +139,12 @@ export async function mount() {
         hide(); // keeps modal state in memory; does not unmount
         const { image, error } = await selectRegion();
         show();
-        if (image) modal?.addImage(image);
-        // A cancel yields no error and must stay silent. A real failure —
-        // captureVisibleTab refusing on a restricted page, a crop error, the
-        // extension reloading mid-capture — has to say so, or the user drags
-        // a region and nothing happens with no explanation.
-        else if (error) modal?.showToast(error);
+        if (image) {
+          modal?.addImage(image);
+          scheduleDraftSave();
+        } else if (error) {
+          modal?.showToast(error);
+        }
       },
       onSave: () => {
         if (!modal) return;
@@ -197,13 +226,16 @@ export async function mount() {
           },
         });
       },
-      onDiscardDraft: () => {
+      onDiscardDraft: async () => {
+        clearTimeout(draftTimer);
+        await chrome.runtime.sendMessage({
+          type: 'DISCARD_DRAFT',
+          origin: location.origin,
+        });
         modal?.clear();
       },
       onOpenUrl: (url) => chrome.runtime.sendMessage({ type: 'OPEN_URL', url }),
-      onChange: () => {
-        // Wired up in Task 9.
-      },
+      onChange: scheduleDraftSave,
     },
     init.projects ?? [],
     { lastProjectId: init.lastProjectId, lastTeamId: init.lastTeamId }
@@ -211,6 +243,7 @@ export async function mount() {
 
   root.innerHTML = '';
   root.append(modal.element);
+  if (init.draft) modal.setValues(init.draft);
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
