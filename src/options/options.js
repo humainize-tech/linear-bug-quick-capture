@@ -5,7 +5,12 @@
  * @module options
  */
 
-import { getApiKey, setApiKey, clearApiKey } from '../lib/storage.js';
+import {
+  getApiKey,
+  setApiKey,
+  clearApiKey,
+  clearAllDrafts,
+} from '../lib/storage.js';
 
 /**
  * Look up a required element. Returns HTMLElement, which covers everything
@@ -76,6 +81,16 @@ $('clear').addEventListener('click', async () => {
   await clearApiKey();
   keyInput.value = '';
   setStatus('Key cleared.', '');
+});
+
+$('clear-drafts').addEventListener('click', async () => {
+  await clearAllDrafts();
+  setStatus('All drafts cleared.', 'ok');
+});
+
+$('reset-sticky').addEventListener('click', async () => {
+  await chrome.storage.local.remove('stickyPrefs');
+  setStatus('Remembered project reset.', 'ok');
 });
 
 load();

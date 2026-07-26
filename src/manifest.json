@@ -3,6 +3,12 @@
   "name": "Linear Bug Quick Capture",
   "version": "0.1.0",
   "description": "Capture a region of the page and file it as a Linear bug.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
     "https://api.linear.app/*",
@@ -14,7 +20,12 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Capture a Linear bug"
+    "default_title": "Capture a Linear bug",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
   },
   "options_page": "options/options.html",
   "web_accessible_resources": [

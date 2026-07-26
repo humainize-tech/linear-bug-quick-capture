@@ -162,18 +162,21 @@ chrome.action.onClicked.addListener(async (tab) => {
 const TINY_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
 
-// Dev hook: inspect the service worker at chrome://extensions and call these
-// from its console to exercise the Linear client without any UI. Task 10
-// gates this behind a flag before the extension is considered done.
-// @ts-ignore - augmenting the worker global for debugging
-self.__debug = {
-  fetchViewer,
-  fetchProjects,
-  uploadImage,
-  createIssue,
-  buildDescription,
-  TINY_PNG,
-};
+// Dev-only console hook. Off by default. To enable, run
+//   chrome.storage.local.set({ debugHooks: true })
+// then reload the extension and inspect the service worker.
+chrome.storage.local.get('debugHooks').then((out) => {
+  if (!out.debugHooks) return;
+  // @ts-ignore - augmenting the worker global for debugging
+  self.__debug = {
+    fetchViewer,
+    fetchProjects,
+    uploadImage,
+    createIssue,
+    buildDescription,
+    TINY_PNG,
+  };
+});
 
 /**
  * Issue creation runs over a port rather than a one-shot message so upload
