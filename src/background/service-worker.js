@@ -11,6 +11,7 @@ import {
   LinearError,
 } from './linear-api.js';
 import { buildDescription } from '../lib/description.js';
+import { getApiKey } from '../lib/storage.js';
 
 /**
  * Route a one-shot message. Returns a plain serialisable object.
@@ -36,6 +37,15 @@ async function handleMessage(msg) {
         return { ok: false, message: e.message, code: e.code ?? 'GRAPHQL' };
       }
 
+    case 'GET_INIT': {
+      const key = await getApiKey();
+      return { ok: true, hasKey: Boolean(key) };
+    }
+
+    case 'OPEN_URL':
+      await chrome.tabs.create({ url: msg.url });
+      return { ok: true };
+
     default:
       return { ok: false, message: `Unknown message type: ${msg?.type}` };
   }
@@ -44,6 +54,57 @@ async function handleMessage(msg) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   handleMessage(msg).then(sendResponse);
   return true; // keep the channel open for the async response
+});
+
+const BADGE_MS = 4000;
+
+/**
+ * Flash an error badge on the toolbar icon. Used when a page forbids
+ * injection, since there is no UI to put a message in.
+ * @param {number} tabId
+ * @param {string} title
+ */
+async function flashBadge(tabId, title) {
+  await chrome.action.setBadgeText({ tabId, text: '!' });
+  await chrome.action.setBadgeBackgroundColor({ tabId, color: '#c0392b' });
+  await chrome.action.setTitle({ tabId, title });
+  setTimeout(() => {
+    chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+    chrome.action.setTitle({ tabId, title: 'Capture a Linear bug' }).catch(() => {});
+  }, BADGE_MS);
+}
+
+/**
+ * True if the overlay is already mounted in this tab.
+ * @param {number} tabId
+ */
+async function isMounted(tabId) {
+  try {
+    const res = await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+    return res?.ok === true;
+  } catch {
+    return false; // no receiver: nothing injected yet
+  }
+}
+
+chrome.action.onClicked.addListener(async (tab) => {
+  if (!tab.id) return;
+
+  if (await isMounted(tab.id)) {
+    await chrome.tabs.sendMessage(tab.id, { type: 'SHOW' });
+    return;
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['content/bootstrap.js'],
+    });
+  } catch {
+    // chrome://, the Web Store, chrome-extension://, view-source:, and the
+    // PDF viewer all refuse injection. Nothing to do but say so.
+    await flashBadge(tab.id, 'Cannot capture a bug on this page');
+  }
 });
 
 const TINY_PNG =
