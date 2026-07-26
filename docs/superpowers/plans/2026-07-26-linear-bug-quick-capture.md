@@ -2006,7 +2006,7 @@ git commit -m "feat: bug form with project select and conditional team select"
 - Consumes: `createModal().addImage()` from Task 6.
 - Produces:
   - `lib/crop.js` — `MIN_DRAG_PX: number`, `normalizeDragRect(start, end): {left, top, width, height}`, `computeCropRect(rect, dpr, imageWidth, imageHeight): {sx, sy, sw, sh}`.
-  - `content/region-select.js` — `selectRegion(): Promise<CapturedImage|null>` resolving `null` on cancel.
+  - `content/region-select.js` — `selectRegion(): Promise<SelectionResult>` where `SelectionResult` is `{image: CapturedImage|null, error: string|null}`. A user cancel gives `{image: null, error: null}`; a genuine failure gives `{image: null, error: '<user-facing message>'}`. The two must stay distinguishable — silence is correct for a cancel and wrong for a failure.
   - `service-worker.js` — message `{type:'CAPTURE_VIEWPORT'}` returning `{ok, dataUrl}`.
 
 - [ ] **Step 1: Create `src/lib/crop.js`**
@@ -2093,8 +2093,17 @@ import { MIN_DRAG_PX, normalizeDragRect, computeCropRect } from '../lib/crop.js'
 const OVERLAY_ID = 'linear-bug-quick-capture-selector';
 
 /**
+ * The outcome of one selection cycle. `error` distinguishes a genuine
+ * failure (which must be surfaced to the user) from a plain cancel (where
+ * silence is correct) — both of which have a null `image`.
+ * @typedef {Object} SelectionResult
+ * @property {CapturedImage|null} image
+ * @property {string|null} error
+ */
+
+/**
  * Run one selection cycle.
- * @returns {Promise<CapturedImage|null>} null if cancelled.
+ * @returns {Promise<SelectionResult>}
  */
 export function selectRegion() {
   return new Promise((resolve) => {
@@ -2164,19 +2173,27 @@ export function selectRegion() {
       e.stopPropagation();
       e.preventDefault();
       cleanup();
-      resolve(null);
+      resolve({ image: null, error: null });
     }
     window.addEventListener('keydown', onKey, true);
 
     dim.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return; // ignore right/middle click
       start = { x: e.clientX, y: e.clientY };
-      rectEl.style.display = 'block';
-      readout.style.display = 'block';
+      // Clear any geometry left by an earlier drag in this same cycle.
+      // Without this, a mousedown/mouseup pair with no intervening mousemove
+      // (which happens when a drag is released outside the viewport and the
+      // user clicks back in) would commit the PREVIOUS rectangle and attach
+      // the wrong region to the ticket. Also don't paint the box until there
+      // is an actual drag to show.
+      rect = null;
     });
 
     dim.addEventListener('mousemove', (e) => {
       if (!start) return;
       rect = normalizeDragRect(start, { x: e.clientX, y: e.clientY });
+      rectEl.style.display = 'block';
+      readout.style.display = 'block';
       rectEl.style.left = `${rect.left}px`;
       rectEl.style.top = `${rect.top}px`;
       rectEl.style.width = `${rect.width}px`;
@@ -2189,7 +2206,7 @@ export function selectRegion() {
     dim.addEventListener('mouseup', async () => {
       if (!start || !rect || rect.width < MIN_DRAG_PX || rect.height < MIN_DRAG_PX) {
         cleanup();
-        resolve(null);
+        resolve({ image: null, error: null }); // a stray click, not a failure
         return;
       }
       const committed = rect;
@@ -2204,14 +2221,36 @@ export function selectRegion() {
       await nextFrame();
       await nextFrame();
 
-      const res = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
-      cleanup();
-
-      if (!res?.ok) {
-        resolve(null);
-        return;
+      try {
+        const res = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
+        if (!res?.ok) {
+          resolve({
+            image: null,
+            error: res?.message ?? 'Could not capture this page.',
+          });
+          return;
+        }
+        const image = await cropDataUrl(res.dataUrl, committed);
+        resolve(
+          image
+            ? { image, error: null }
+            : { image: null, error: 'Could not process the screenshot.' }
+        );
+      } catch {
+        // sendMessage REJECTS (it does not return ok:false) when the
+        // extension context is invalidated — which happens on every reload
+        // or auto-update while this content script is still live. Without
+        // this catch the rejection escaped the async listener, so cleanup()
+        // never ran and the promise never settled: the page stayed
+        // scroll-locked with the modal hidden and every selector element
+        // already display:none, leaving the user no visual cue at all.
+        resolve({ image: null, error: 'The extension reloaded. Try again.' });
+      } finally {
+        // Runs on every path above, including the rejection. cleanup() is
+        // idempotent, so an Escape during the capture round-trip that
+        // already cleaned up is harmless.
+        cleanup();
       }
-      resolve(await cropDataUrl(res.dataUrl, committed));
     });
   });
 }
@@ -2270,9 +2309,14 @@ Replace the `onTakeScreenshot` handler in the `createModal` call:
       onTakeScreenshot: async () => {
         modal?.clearToast();
         hide(); // keeps modal state in memory; does not unmount
-        const image = await selectRegion();
+        const { image, error } = await selectRegion();
         show();
         if (image) modal?.addImage(image);
+        // A cancel yields no error and must stay silent. A real failure —
+        // captureVisibleTab refusing on a restricted page, a crop error, the
+        // extension reloading mid-capture — has to say so, or the user drags
+        // a region and nothing happens with no explanation.
+        else if (error) modal?.showToast(error);
       },
 ```
 
@@ -2700,12 +2744,14 @@ After `root.append(modal.element);` at the end of `mount()`, restore any draft:
   if (init.draft) modal.setValues(init.draft);
 ```
 
-And in `onTakeScreenshot`, persist after adding an image so a capture survives a close. Change its body's last line to:
+And in `onTakeScreenshot`, persist after adding an image so a capture survives a close. Replace the `if (image) … else if (error) …` tail of that handler with the version below — keep the `else if (error)` branch, which is what surfaces a genuine capture failure rather than leaving the user staring at an unchanged form:
 
 ```js
         if (image) {
           modal?.addImage(image);
           scheduleDraftSave();
+        } else if (error) {
+          modal?.showToast(error);
         }
 ```
 
