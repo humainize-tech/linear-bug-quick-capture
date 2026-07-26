@@ -82,3 +82,36 @@ export async function fetchViewer() {
     organizationName: data.viewer.organization.name,
   };
 }
+
+/**
+ * All active (non-completed) projects visible to the key, with their teams.
+ * A team-scoped key simply sees fewer projects, which is the desired
+ * behaviour.
+ * @returns {Promise<import('../lib/types.js').Project[]>}
+ */
+export async function fetchProjects() {
+  const data = await graphql(`
+    query Projects {
+      projects(first: 250, filter: { state: { neq: "completed" } }) {
+        nodes {
+          id
+          name
+          teams { nodes { id key name } }
+        }
+      }
+    }
+  `);
+  return data.projects.nodes
+    .map((/** @type {any} */ p) => ({
+      id: p.id,
+      name: p.name,
+      teams: p.teams.nodes.map((/** @type {any} */ t) => ({
+        id: t.id,
+        key: t.key,
+        name: t.name,
+      })),
+    }))
+    .sort((/** @type {any} */ a, /** @type {any} */ b) =>
+      a.name.localeCompare(b.name)
+    );
+}

@@ -3,7 +3,7 @@
  * @module service-worker
  */
 
-import { fetchViewer, LinearError } from './linear-api.js';
+import { fetchViewer, fetchProjects, LinearError } from './linear-api.js';
 
 /**
  * Route a one-shot message. Returns a plain serialisable object.
@@ -38,3 +38,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   handleMessage(msg).then(sendResponse);
   return true; // keep the channel open for the async response
 });
+
+// Dev hook: inspect the service worker at chrome://extensions and call these
+// from its console to exercise the Linear client without any UI. Task 10
+// gates this behind a flag before the extension is considered done.
+// @ts-ignore - augmenting the worker global for debugging
+self.__debug = { fetchViewer, fetchProjects };
