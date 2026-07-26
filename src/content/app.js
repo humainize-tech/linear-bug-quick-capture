@@ -19,11 +19,21 @@ let modal = null;
 const DRAFT_DEBOUNCE_MS = 300;
 /** @type {ReturnType<typeof setTimeout>|undefined} */
 let draftTimer;
+/**
+ * Set once an issue has been created, to stop a debounced save from writing
+ * the draft back after the worker already cleared it. The form fields stay
+ * editable during a save (only the Save button is disabled), so a user
+ * typing mid-upload can arm a timer that would otherwise fire after the
+ * issue exists and resurrect a draft for a bug that was already filed.
+ */
+let draftsFrozen = false;
 
 function scheduleDraftSave() {
+  if (draftsFrozen) return;
   clearTimeout(draftTimer);
   draftTimer = setTimeout(async () => {
-    if (!modal) return;
+    // Re-check: the save may have completed while this timer was pending.
+    if (draftsFrozen || !modal) return;
     const values = modal.getValues();
     const res = await chrome.runtime.sendMessage({
       type: 'SAVE_DRAFT',
@@ -142,12 +152,18 @@ export async function mount() {
         if (image) {
           modal?.addImage(image);
           scheduleDraftSave();
-        } else if (error) {
+        }
+        // A cancel yields no error and must stay silent. A real failure —
+        // captureVisibleTab refusing on a restricted page, a crop error, the
+        // extension reloading mid-capture — has to say so, or the user drags
+        // a region and nothing happens with no explanation.
+        else if (error) {
           modal?.showToast(error);
         }
       },
       onSave: () => {
         if (!modal) return;
+        clearTimeout(draftTimer); // don't let a queued save outlive this one
         modal.clearToast();
         const values = modal.getValues();
 
@@ -174,6 +190,12 @@ export async function mount() {
           }
           if (msg.type === 'DONE') {
             settled = true;
+            // The worker has already cleared this origin's draft. Freeze so
+            // nothing writes it back: the fields stay editable during a save,
+            // so a user typing mid-upload can have armed a timer that would
+            // otherwise fire now and resurrect a draft for a filed bug.
+            draftsFrozen = true;
+            clearTimeout(draftTimer);
             port.disconnect();
             modal?.showSuccess(msg.identifier, msg.url);
             setTimeout(unmount, 3000);
@@ -243,6 +265,7 @@ export async function mount() {
 
   root.innerHTML = '';
   root.append(modal.element);
+  draftsFrozen = false;
   if (init.draft) modal.setValues(init.draft);
 }
 
