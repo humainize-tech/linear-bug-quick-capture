@@ -16,6 +16,7 @@ import {
   getCachedProjects,
   setCachedProjects,
   getStickyPrefs,
+  setStickyPrefs,
 } from '../lib/storage.js';
 
 /**
@@ -159,3 +160,64 @@ self.__debug = {
   buildDescription,
   TINY_PNG,
 };
+
+/**
+ * Issue creation runs over a port rather than a one-shot message so upload
+ * progress can stream back to the modal.
+ */
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'create-issue') return;
+
+  port.onMessage.addListener(async (msg) => {
+    if (msg?.type !== 'CREATE_ISSUE') return;
+    /** @type {import('../lib/types.js').CreatePayload} */
+    const payload = msg.payload;
+
+    try {
+      /** @type {string[]} */
+      const assetUrls = [];
+
+      // STRICTLY SEQUENTIAL. Each signed upload URL expires 60s after it is
+      // issued, so preparing the next upload before finishing this one can
+      // expire the earlier URL. Do not convert this to Promise.all.
+      for (let i = 0; i < payload.images.length; i++) {
+        port.postMessage({
+          type: 'PROGRESS',
+          phase: 'upload',
+          index: i + 1,
+          total: payload.images.length,
+        });
+        const url = await uploadImage(
+          payload.images[i].dataUrl,
+          `screenshot-${i + 1}.png`
+        );
+        assetUrls.push(url);
+      }
+
+      port.postMessage({ type: 'PROGRESS', phase: 'create', index: 0, total: 0 });
+
+      const description = buildDescription({
+        description: payload.description,
+        pageUrl: payload.pageUrl,
+        assetUrls,
+      });
+
+      const issue = await createIssue({
+        title: payload.title,
+        description,
+        teamId: payload.teamId,
+        projectId: payload.projectId,
+      });
+
+      await setStickyPrefs(payload.projectId, payload.teamId);
+      port.postMessage({ type: 'DONE', identifier: issue.identifier, url: issue.url });
+    } catch (err) {
+      const e = /** @type {LinearError} */ (err);
+      port.postMessage({
+        type: 'ERROR',
+        message: e.message ?? 'Something went wrong.',
+        code: e.code ?? 'GRAPHQL',
+      });
+    }
+  });
+});

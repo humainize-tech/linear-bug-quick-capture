@@ -118,7 +118,66 @@ export async function mount() {
         else if (error) modal?.showToast(error);
       },
       onSave: () => {
-        // Wired up in Task 8.
+        if (!modal) return;
+        modal.clearToast();
+        const values = modal.getValues();
+
+        modal.setFieldError('title', values.title ? null : 'Give the bug a name.');
+        modal.setFieldError('project', values.projectId ? null : 'Pick a project.');
+        if (!values.title || !values.projectId || !values.teamId) return;
+
+        modal.setBusy('Saving…');
+
+        const port = chrome.runtime.connect({ name: 'create-issue' });
+
+        port.onMessage.addListener((msg) => {
+          if (msg.type === 'PROGRESS') {
+            modal?.setBusy(
+              msg.phase === 'upload'
+                ? `Uploading ${msg.index} of ${msg.total}…`
+                : 'Creating issue…'
+            );
+            return;
+          }
+          if (msg.type === 'DONE') {
+            port.disconnect();
+            modal?.showSuccess(msg.identifier, msg.url);
+            setTimeout(unmount, 3000);
+            return;
+          }
+          if (msg.type === 'ERROR') {
+            port.disconnect();
+            modal?.setBusy(null);
+            // Field values are untouched, so the user can fix and retry.
+            modal?.showToast(
+              msg.message,
+              msg.code === 'AUTH'
+                ? {
+                    label: 'Open settings',
+                    onClick: () =>
+                      chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' }),
+                  }
+                : undefined
+            );
+          }
+        });
+
+        port.onDisconnect.addListener(() => {
+          // Fires if the worker was terminated mid-save.
+          if (modal) modal.setBusy(null);
+        });
+
+        port.postMessage({
+          type: 'CREATE_ISSUE',
+          payload: {
+            title: values.title,
+            description: values.description,
+            pageUrl: location.href,
+            projectId: values.projectId,
+            teamId: values.teamId,
+            images: modal.getImages(),
+          },
+        });
       },
       onDiscardDraft: () => {
         modal?.clear();
