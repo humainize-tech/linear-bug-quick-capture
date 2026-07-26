@@ -1251,8 +1251,9 @@ button.primary { padding: 8px 12px; border: 0; border-radius: 6px; background: #
 p { margin: 0 0 10px; color: #6b6b76; }
 `;
 
-/** Remove the overlay entirely. */
+/** Remove the overlay entirely, including the document-level listener. */
 export function unmount() {
+  document.removeEventListener('keydown', onKeydown, true);
   host?.remove();
   host = null;
   root = null;
@@ -1347,7 +1348,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return;
   }
   if (msg?.type === 'SHOW') {
-    show();
+    // PING answers "this module is loaded", which is not the same as "the
+    // overlay is mounted": a successful save auto-dismisses via unmount(),
+    // leaving the module resident with host === null. show() would be a
+    // silent no-op there and the icon would appear dead until a page reload,
+    // so re-mount when there is nothing to show.
+    if (host) show();
+    else void mount();
     sendResponse({ ok: true });
   }
 });
@@ -1945,7 +1952,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return;
   }
   if (msg?.type === 'SHOW') {
-    show();
+    // PING answers "this module is loaded", which is not the same as "the
+    // overlay is mounted": a successful save auto-dismisses via unmount(),
+    // leaving the module resident with host === null. show() would be a
+    // silent no-op there and the icon would appear dead until a page reload,
+    // so re-mount when there is nothing to show.
+    if (host) show();
+    else void mount();
     sendResponse({ ok: true });
   }
 });
