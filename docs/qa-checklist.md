@@ -14,8 +14,15 @@ the Linear client complete. Delete any test issues you create in Linear.
 - [ ] Bad key: **Test connection** shows a red error, and the message contains
       no key material.
 - [ ] Good key: **Test connection** shows your name and workspace.
-- [ ] **Clear key** empties the field, and the overlay reverts to the needs-key
-      state.
+- [ ] **Clear key** empties the field. An overlay already mounted in a tab
+      keeps showing its form until that tab is reloaded — the content script
+      does not watch storage, deliberately, since noticing would cost either
+      the `tabs` permission or a storage listener in page context. Reload the
+      tab, then confirm the icon shows the needs-key state.
+- [ ] With no key set, clicking the icon shows the needs-key notice; then set
+      a key in options, return to the tab, and click the icon again — the
+      **form must appear** without a page reload. (This is the first-run path;
+      it regressed once and is worth re-checking.)
 
 ## Project and team selection
 
