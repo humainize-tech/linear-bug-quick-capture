@@ -3,7 +3,14 @@
  * @module service-worker
  */
 
-import { fetchViewer, fetchProjects, uploadImage, LinearError } from './linear-api.js';
+import {
+  fetchViewer,
+  fetchProjects,
+  uploadImage,
+  createIssue,
+  LinearError,
+} from './linear-api.js';
+import { buildDescription } from '../lib/description.js';
 
 /**
  * Route a one-shot message. Returns a plain serialisable object.
@@ -46,4 +53,11 @@ const TINY_PNG =
 // from its console to exercise the Linear client without any UI. Task 10
 // gates this behind a flag before the extension is considered done.
 // @ts-ignore - augmenting the worker global for debugging
-self.__debug = { fetchViewer, fetchProjects, uploadImage, TINY_PNG };
+self.__debug = {
+  fetchViewer,
+  fetchProjects,
+  uploadImage,
+  createIssue,
+  buildDescription,
+  TINY_PNG,
+};

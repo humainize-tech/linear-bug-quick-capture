@@ -179,3 +179,29 @@ export async function uploadImage(dataUrl, filename) {
 
   return assetUrl;
 }
+
+/**
+ * @param {{title: string, description: string, teamId: string, projectId: string}} input
+ * @returns {Promise<{identifier: string, url: string}>}
+ */
+export async function createIssue({ title, description, teamId, projectId }) {
+  const data = await graphql(
+    `
+      mutation CreateIssue($input: IssueCreateInput!) {
+        issueCreate(input: $input) {
+          success
+          issue { id identifier url }
+        }
+      }
+    `,
+    { input: { title, description, teamId, projectId } }
+  );
+
+  if (!data.issueCreate?.success || !data.issueCreate.issue) {
+    throw new LinearError('Linear did not create the issue.', 'GRAPHQL');
+  }
+  return {
+    identifier: data.issueCreate.issue.identifier,
+    url: data.issueCreate.issue.url,
+  };
+}
