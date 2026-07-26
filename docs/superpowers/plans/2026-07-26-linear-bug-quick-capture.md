@@ -689,6 +689,11 @@ export async function setStickyPrefs(projectId, teamId) {
     [KEY_PREFS]: { lastProjectId: projectId, lastTeamId: teamId },
   });
 }
+
+/** Forget the remembered project/team. @returns {Promise<void>} */
+export async function clearStickyPrefs() {
+  await chrome.storage.local.remove(KEY_PREFS);
+}
 ```
 
 - [ ] **Step 3: Add the dev hook to `src/background/service-worker.js`**
@@ -2888,7 +2893,15 @@ function pixels(size) {
   const radius = size * 0.22;
   const bar = Math.max(1, Math.round(size * 0.08));
   const inset = Math.round(size * 0.22);
-  const mid = size / 2;
+  // Integer half-open range [barStart, barEnd), so the bar is exactly `bar`
+  // pixels wide at every size. Do NOT go back to a float distance test like
+  // `Math.abs(x + 0.5 - size / 2) < bar / 2`: at 16px `bar` rounds to 1, so
+  // bar/2 is exactly 0.5, and with an even `size` the nearest pixel centre
+  // sits exactly 0.5 from the midpoint — the strict `<` is never satisfied
+  // and the crosshair vanishes entirely, leaving a blank square at the one
+  // size most visible in the toolbar.
+  const barStart = Math.round((size - bar) / 2);
+  const barEnd = barStart + bar;
   const rows = [];
 
   for (let y = 0; y < size; y++) {
@@ -2901,9 +2914,9 @@ function pixels(size) {
         continue;
       }
       const onVertical =
-        Math.abs(x + 0.5 - mid) < bar / 2 && y >= inset && y <= size - inset;
+        x >= barStart && x < barEnd && y >= inset && y <= size - inset;
       const onHorizontal =
-        Math.abs(y + 0.5 - mid) < bar / 2 && x >= inset && x <= size - inset;
+        y >= barStart && y < barEnd && x >= inset && x <= size - inset;
       row.push(...(onVertical || onHorizontal ? FG : BG));
     }
     rows.push(Buffer.from(row));
@@ -3041,6 +3054,7 @@ import {
   setApiKey,
   clearApiKey,
   clearAllDrafts,
+  clearStickyPrefs,
 } from '../lib/storage.js';
 ```
 
@@ -3051,7 +3065,11 @@ $('clear-drafts').addEventListener('click', async () => {
 });
 
 $('reset-sticky').addEventListener('click', async () => {
-  await chrome.storage.local.remove('stickyPrefs');
+  // Via storage.js rather than chrome.storage.local.remove('stickyPrefs'):
+  // that key belongs to storage.js, and duplicating the literal here means a
+  // rename there would leave this button silently doing nothing, since
+  // removing a non-existent key is not an error.
+  await clearStickyPrefs();
   setStatus('Remembered project reset.', 'ok');
 });
 ```
