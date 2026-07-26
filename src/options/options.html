@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Linear Bug Quick Capture — Settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Linear Bug Quick Capture</h1>
+
+      <section>
+        <h2>Linear API key</h2>
+        <label for="key">Personal API key</label>
+        <div class="row">
+          <input id="key" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="lin_api_..." />
+          <button id="reveal" type="button" class="ghost">Show</button>
+        </div>
+        <div class="row">
+          <button id="save" type="button">Save key</button>
+          <button id="test" type="button" class="ghost">Test connection</button>
+          <button id="clear" type="button" class="ghost danger">Clear key</button>
+        </div>
+        <p id="status" class="status" role="status"></p>
+
+        <div class="note">
+          <strong>Use a scoped key.</strong> This key is stored unencrypted in
+          this extension's local storage, which is how it can work without a
+          backend. Anyone with access to your Chrome profile directory can read
+          it. In Linear, go to <em>Settings &rarr; Account &rarr; Security &amp;
+          Access</em> and create a key limited to <em>Read</em> and
+          <em>Create issues</em>, restricted to the teams you file bugs against
+          — not a full-access key.
+        </div>
+      </section>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

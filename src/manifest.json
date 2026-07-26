@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Linear Bug Quick Capture",
+  "version": "0.1.0",
+  "description": "Capture a region of the page and file it as a Linear bug.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "https://api.linear.app/*",
+    "https://uploads.linear.app/*",
+    "https://storage.googleapis.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Capture a Linear bug"
+  },
+  "options_page": "options/options.html",
+  "web_accessible_resources": [
+    {
+      "resources": ["content/*.js", "lib/*.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

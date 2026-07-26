@@ -1,0 +1,13 @@
+{
+  "name": "linear-bug-quick-capture",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension to create Linear bug tickets from a screen region",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "typescript": "^5.4.0"
+  }
+}
