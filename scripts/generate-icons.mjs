@@ -18,7 +18,15 @@ function pixels(size) {
   const radius = size * 0.22;
   const bar = Math.max(1, Math.round(size * 0.08));
   const inset = Math.round(size * 0.22);
-  const mid = size / 2;
+  // Integer half-open range [barStart, barEnd), so the bar is exactly `bar`
+  // pixels wide at every size. Do NOT go back to a float distance test like
+  // `Math.abs(x + 0.5 - size / 2) < bar / 2`: at 16px `bar` rounds to 1, so
+  // bar/2 is exactly 0.5, and with an even `size` the nearest pixel centre
+  // sits exactly 0.5 from the midpoint — the strict `<` is never satisfied
+  // and the crosshair vanishes entirely, leaving a blank square at the one
+  // size most visible in the toolbar.
+  const barStart = Math.round((size - bar) / 2);
+  const barEnd = barStart + bar;
   const rows = [];
 
   for (let y = 0; y < size; y++) {
@@ -31,9 +39,9 @@ function pixels(size) {
         continue;
       }
       const onVertical =
-        Math.abs(x + 0.5 - mid) < bar / 2 && y >= inset && y <= size - inset;
+        x >= barStart && x < barEnd && y >= inset && y <= size - inset;
       const onHorizontal =
-        Math.abs(y + 0.5 - mid) < bar / 2 && x >= inset && x <= size - inset;
+        y >= barStart && y < barEnd && x >= inset && x <= size - inset;
       row.push(...(onVertical || onHorizontal ? FG : BG));
     }
     rows.push(Buffer.from(row));

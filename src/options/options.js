@@ -10,6 +10,7 @@ import {
   setApiKey,
   clearApiKey,
   clearAllDrafts,
+  clearStickyPrefs,
 } from '../lib/storage.js';
 
 /**
@@ -89,7 +90,11 @@ $('clear-drafts').addEventListener('click', async () => {
 });
 
 $('reset-sticky').addEventListener('click', async () => {
-  await chrome.storage.local.remove('stickyPrefs');
+  // Via storage.js rather than chrome.storage.local.remove('stickyPrefs'):
+  // that key belongs to storage.js, and duplicating the literal here means a
+  // rename there would leave this button silently doing nothing, since
+  // removing a non-existent key is not an error.
+  await clearStickyPrefs();
   setStatus('Remembered project reset.', 'ok');
 });
 

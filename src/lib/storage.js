@@ -70,6 +70,11 @@ export async function setStickyPrefs(projectId, teamId) {
   });
 }
 
+/** @returns {Promise<void>} */
+export async function clearStickyPrefs() {
+  await chrome.storage.local.remove(KEY_PREFS);
+}
+
 const DRAFT_PREFIX = 'draft:';
 /** Leave headroom under the 10 MB chrome.storage.session quota. */
 const DRAFT_BUDGET_BYTES = 8 * 1024 * 1024;
