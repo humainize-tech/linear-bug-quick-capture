@@ -108,9 +108,14 @@ export async function mount() {
       onTakeScreenshot: async () => {
         modal?.clearToast();
         hide(); // keeps modal state in memory; does not unmount
-        const image = await selectRegion();
+        const { image, error } = await selectRegion();
         show();
         if (image) modal?.addImage(image);
+        // A cancel yields no error and must stay silent. A real failure —
+        // captureVisibleTab refusing on a restricted page, a crop error, the
+        // extension reloading mid-capture — has to say so, or the user drags
+        // a region and nothing happens with no explanation.
+        else if (error) modal?.showToast(error);
       },
       onSave: () => {
         // Wired up in Task 8.
