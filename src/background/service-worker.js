@@ -11,7 +11,12 @@ import {
   LinearError,
 } from './linear-api.js';
 import { buildDescription } from '../lib/description.js';
-import { getApiKey } from '../lib/storage.js';
+import {
+  getApiKey,
+  getCachedProjects,
+  setCachedProjects,
+  getStickyPrefs,
+} from '../lib/storage.js';
 
 /**
  * Route a one-shot message. Returns a plain serialisable object.
@@ -39,7 +44,26 @@ async function handleMessage(msg) {
 
     case 'GET_INIT': {
       const key = await getApiKey();
-      return { ok: true, hasKey: Boolean(key) };
+      if (!key) return { ok: true, hasKey: false };
+
+      let projects = await getCachedProjects();
+      if (!projects) {
+        try {
+          projects = await fetchProjects();
+          await setCachedProjects(projects);
+        } catch (err) {
+          const e = /** @type {LinearError} */ (err);
+          return { ok: false, hasKey: true, message: e.message, code: e.code };
+        }
+      }
+      const prefs = await getStickyPrefs();
+      return {
+        ok: true,
+        hasKey: true,
+        projects,
+        lastProjectId: prefs.lastProjectId,
+        lastTeamId: prefs.lastTeamId,
+      };
     }
 
     case 'OPEN_URL':
