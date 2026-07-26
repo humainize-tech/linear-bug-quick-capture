@@ -1397,7 +1397,7 @@ git commit -m "feat: mount shadow-DOM overlay on icon click with restricted-page
 - Consumes: `GET_INIT` from Task 5; `fetchProjects`, `getCachedProjects`, `setCachedProjects`, `getStickyPrefs` from Task 2.
 - Produces:
   - `service-worker.js` — `GET_INIT` now returns `{ok, hasKey, projects, lastProjectId, lastTeamId}`.
-  - `content/modal.js` — `createModal(handlers): ModalController` where handlers are `{onTakeScreenshot, onSave, onDiscardDraft, onOpenOptions, onClose}` and the controller exposes `element: HTMLElement`, `getValues(): {title, description, projectId, teamId}`, `setValues(draft)`, `addImage(img: CapturedImage)`, `removeImage(index: number)`, `getImages(): CapturedImage[]`, `setBusy(label: string|null)`, `showToast(message: string, action?: {label, onClick})`, `showSuccess(identifier, url)`, `setFieldError(field, message)`.
+  - `content/modal.js` — exports `MAX_IMAGES`, `MODAL_CSS`, and `createModal(handlers, projects, prefs): ModalController`. Handlers are `{onTakeScreenshot, onSave, onDiscardDraft, onClose, onOpenUrl, onChange}`. The controller exposes exactly: `element: HTMLElement`, `getValues(): {title, description, projectId, teamId}`, `setValues(draft)`, `addImage(img: CapturedImage)`, `getImages(): CapturedImage[]`, `clear()`, `setBusy(label: string|null)`, `setFieldError(field: 'title'|'project', message: string|null)`, `showToast(message, action?: {label, onClick})`, `clearToast()`, `showSuccess(identifier, url)`. Note there is deliberately **no** `removeImage(index)` method — thumbnail removal is handled by the ✕ click handler inside `renderShots()`, which owns the `images` array directly.
 
 - [ ] **Step 1: Extend `GET_INIT` in `src/background/service-worker.js`**
 
