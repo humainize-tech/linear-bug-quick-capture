@@ -19,11 +19,17 @@ export async function getApiKey() {
  */
 export async function setApiKey(key) {
   await chrome.storage.local.set({ [KEY_API]: key });
+  // The cache is keyed by nothing but time, so a different key's workspace
+  // would keep showing the previous key's projects for up to the TTL — and
+  // saving against a stale project id yields a raw GraphQL error.
+  // `clearCachedProjects` is a hoisted function declaration below.
+  await clearCachedProjects();
 }
 
 /** @returns {Promise<void>} */
 export async function clearApiKey() {
   await chrome.storage.local.remove(KEY_API);
+  await clearCachedProjects();
 }
 
 const KEY_PREFS = 'stickyPrefs';
@@ -49,6 +55,18 @@ export async function setCachedProjects(projects) {
   await chrome.storage.session.set({
     [KEY_PROJECT_CACHE]: { fetchedAt: Date.now(), projects },
   });
+}
+
+/**
+ * Drop the project cache. Called on any API key change: the cache carries no
+ * identity of the key that filled it, so it must not outlive one.
+ *
+ * Declared as a function declaration so it hoists above `setApiKey` /
+ * `clearApiKey`, which call it.
+ * @returns {Promise<void>}
+ */
+export async function clearCachedProjects() {
+  await chrome.storage.session.remove(KEY_PROJECT_CACHE);
 }
 
 /**

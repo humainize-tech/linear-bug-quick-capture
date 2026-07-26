@@ -9,6 +9,7 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
+  "minimum_chrome_version": "112",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
     "https://api.linear.app/*",
@@ -30,7 +31,12 @@
   "options_page": "options/options.html",
   "web_accessible_resources": [
     {
-      "resources": ["content/*.js", "lib/*.js"],
+      "resources": [
+        "content/app.js",
+        "content/modal.js",
+        "content/region-select.js",
+        "lib/crop.js"
+      ],
       "matches": ["<all_urls>"]
     }
   ]
