@@ -150,10 +150,16 @@ export function createModal(handlers, projects, prefs) {
 
   projectSelect.addEventListener('change', () => {
     syncTeamSelect();
+    // An inline error from a failed Save must not outlive the edit that
+    // addresses it, or it reads as a live complaint about the new value.
+    setFieldError('project', null);
     handlers.onChange();
   });
   teamSelect.addEventListener('change', handlers.onChange);
-  nameInput.addEventListener('input', handlers.onChange);
+  nameInput.addEventListener('input', () => {
+    setFieldError('title', null);
+    handlers.onChange();
+  });
   descInput.addEventListener('input', handlers.onChange);
 
   if (prefs.lastProjectId && projects.some((p) => p.id === prefs.lastProjectId)) {
@@ -188,9 +194,30 @@ export function createModal(handlers, projects, prefs) {
   save.addEventListener('click', handlers.onSave);
   foot.append(discard, spacer, save);
 
+  // Spec §7: no projects returned → Save disabled, with a hint. The hint is
+  // revealed where the select is hidden above; the button only exists here,
+  // so the disable belongs here. Left enabled, Save would complain "Pick a
+  // project." beneath a select that is not on screen.
+  if (!projects.length) {
+    save.disabled = true;
+    save.textContent = 'No projects available';
+  }
+
   const toastSlot = el('div', 'toast-slot');
 
   panel.append(head, body, foot, toastSlot);
+
+  /**
+   * A function declaration (not just a method on the returned object) so the
+   * field listeners wired above can clear errors as the user types.
+   * @param {'title'|'project'} field
+   * @param {string|null} message
+   */
+  function setFieldError(field, message) {
+    const node = field === 'title' ? nameErr : projectErr;
+    node.textContent = message ?? '';
+    node.classList.toggle('hidden', !message);
+  }
 
   function renderShots() {
     shots.innerHTML = '';
@@ -291,15 +318,7 @@ export function createModal(handlers, projects, prefs) {
       save.textContent = label ?? 'Save bug';
     },
 
-    /**
-     * @param {'title'|'project'} field
-     * @param {string|null} message
-     */
-    setFieldError(field, message) {
-      const node = field === 'title' ? nameErr : projectErr;
-      node.textContent = message ?? '';
-      node.classList.toggle('hidden', !message);
-    },
+    setFieldError,
 
     /**
      * @param {string} message

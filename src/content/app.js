@@ -15,6 +15,10 @@ let host = null;
 let root = null;
 /** @type {ReturnType<typeof createModal>|null} */
 let modal = null;
+/** True once a save has succeeded and the success panel is showing. */
+let successShown = false;
+/** @type {ReturnType<typeof setTimeout>|undefined} */
+let dismissTimer;
 
 const DRAFT_DEBOUNCE_MS = 300;
 /** @type {ReturnType<typeof setTimeout>|undefined} */
@@ -56,6 +60,8 @@ function scheduleDraftSave() {
 }
 
 export function unmount() {
+  clearTimeout(dismissTimer);
+  successShown = false;
   document.removeEventListener('keydown', onKeydown, true);
   host?.remove();
   host = null;
@@ -107,14 +113,23 @@ function renderNotice(text, actionLabel, onAction) {
 }
 
 export async function mount() {
-  if (host) {
+  // `host` alone is not enough. A notice state (no key, or projects failed to
+  // load) and the post-success state both leave a mounted host with no live
+  // form, and re-showing those presents a stale panel forever — a key saved
+  // in the meantime, or a network that recovered, would never be picked up.
+  if (host && modal && !successShown) {
     show();
     return;
   }
+  if (host) unmount(); // stale notice or success panel: rebuild from scratch
 
   host = document.createElement('div');
   host.id = HOST_ID;
-  root = host.attachShadow({ mode: 'open' });
+  // Closed, not open: with an open root any script on the host page could
+  // read `host.shadowRoot` and enumerate the project list and team keys,
+  // poll the title/description fields, or click Save. Nothing here reads
+  // `.shadowRoot` off the host — `root` is the only handle.
+  root = host.attachShadow({ mode: 'closed' });
 
   const sheet = new CSSStyleSheet();
   sheet.replaceSync(MODAL_CSS);
@@ -123,10 +138,26 @@ export async function mount() {
   document.documentElement.append(host);
   document.addEventListener('keydown', onKeydown, true);
 
-  const init = await chrome.runtime.sendMessage({
-    type: 'GET_INIT',
-    origin: location.origin,
-  });
+  /** @type {any} */
+  let init;
+  try {
+    init = await chrome.runtime.sendMessage({
+      type: 'GET_INIT',
+      origin: location.origin,
+    });
+  } catch {
+    // sendMessage rejects when the worker cannot be reached at all — the
+    // extension was reloaded or updated while this content script stayed
+    // live. Without this the host is left appended with an empty shadow
+    // root: an invisible overlay and a keydown listener with nothing to
+    // close.
+    renderNotice(
+      'Could not reach the extension background. Try again.',
+      'Open settings',
+      () => chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' })
+    );
+    return;
+  }
 
   if (!init?.hasKey) {
     renderNotice('Add your Linear API key to get started.', 'Open settings', () =>
@@ -169,6 +200,11 @@ export async function mount() {
 
         modal.setFieldError('title', values.title ? null : 'Give the bug a name.');
         modal.setFieldError('project', values.projectId ? null : 'Pick a project.');
+        // A project with no visible team (possible with a team-scoped API
+        // key) would otherwise fail the guard below with nothing shown.
+        if (values.projectId && !values.teamId) {
+          modal.setFieldError('project', 'No team available for this project.');
+        }
         if (!values.title || !values.projectId || !values.teamId) return;
 
         modal.setBusy('Saving…');
@@ -189,6 +225,11 @@ export async function mount() {
             return;
           }
           if (msg.type === 'DONE') {
+            // Escape hides the overlay but preserves its state, so a save
+            // can finish while the panel is display:none. Reveal it — the
+            // identifier and the "Open in Linear" link are the only record
+            // the user gets that the issue exists.
+            show();
             settled = true;
             // The worker has already cleared this origin's draft. Freeze so
             // nothing writes it back: the fields stay editable during a save,
@@ -198,10 +239,14 @@ export async function mount() {
             clearTimeout(draftTimer);
             port.disconnect();
             modal?.showSuccess(msg.identifier, msg.url);
-            setTimeout(unmount, 3000);
+            successShown = true;
+            dismissTimer = setTimeout(unmount, 3000);
             return;
           }
           if (msg.type === 'ERROR') {
+            // The overlay may be hidden (Escape mid-flight). A toast written
+            // into a display:none host is no feedback at all.
+            show();
             settled = true;
             port.disconnect();
             modal?.setBusy(null);
@@ -230,6 +275,9 @@ export async function mount() {
           // immediately, which would otherwise paint an "interrupted" toast
           // over the success panel.
           if (settled) return;
+          // As with the ERROR branch: the overlay may be hidden, and this
+          // toast is the only sign the save did not complete.
+          show();
           modal?.setBusy(null);
           modal?.showToast(
             'Saving was interrupted before it finished. Check Linear for a partly created issue, then save again.'
@@ -275,12 +323,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return;
   }
   if (msg?.type === 'SHOW') {
-    // PING answers "this module is loaded", which is not the same as "the
-    // overlay is mounted": a successful save auto-dismisses via unmount(),
-    // leaving the module resident with host === null. show() would be a
-    // silent no-op there and the icon would appear dead until a page reload,
-    // so re-mount when there is nothing to show.
-    if (host) show();
+    // PING answers "this module is loaded", not "a usable overlay is on
+    // screen". After an auto-dismiss host is null; after a notice or a
+    // success panel there is a host but no live form. Only show() when there
+    // is genuinely a form to reveal — otherwise re-initialize. mount()
+    // tears down a stale host itself.
+    if (host && modal && !successShown) show();
     else void mount();
     sendResponse({ ok: true });
   }

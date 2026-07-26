@@ -26,7 +26,8 @@ export function selectRegion() {
   return new Promise((resolve) => {
     const layer = document.createElement('div');
     layer.id = OVERLAY_ID;
-    const shadow = layer.attachShadow({ mode: 'open' });
+    // Closed so the host page cannot reach into the selector's DOM.
+    const shadow = layer.attachShadow({ mode: 'closed' });
 
     const sheet = new CSSStyleSheet();
     sheet.replaceSync(`
@@ -71,6 +72,16 @@ export function selectRegion() {
     const prevOverflow = document.documentElement.style.overflow;
     document.documentElement.style.overflow = 'hidden';
 
+    /** @param {Event} e */
+    const blockScroll = (e) => e.preventDefault();
+    // The documentElement lock above misses body-level and inner
+    // overflow:auto scrollers, which are common in SPA layouts. Without
+    // this, a trackpad nudge mid-drag scrolls the page under the fixed dim
+    // layer and the captured frame no longer matches the selection — a
+    // silently wrong screenshot.
+    dim.addEventListener('wheel', blockScroll, { passive: false });
+    dim.addEventListener('touchmove', blockScroll, { passive: false });
+
     document.documentElement.append(layer);
 
     /** @type {{x: number, y: number}|null} */
@@ -80,6 +91,8 @@ export function selectRegion() {
 
     function cleanup() {
       document.documentElement.style.overflow = prevOverflow;
+      dim.removeEventListener('wheel', blockScroll);
+      dim.removeEventListener('touchmove', blockScroll);
       layer.remove();
       window.removeEventListener('keydown', onKey, true);
     }
