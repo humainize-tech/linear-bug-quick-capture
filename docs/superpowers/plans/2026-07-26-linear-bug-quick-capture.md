@@ -1606,7 +1606,9 @@ export function createModal(handlers, projects, prefs) {
   }
   syncTeamSelect();
 
-  const shotBtn = el('button', 'shot-btn');
+  // Cast because renderShots() sets .disabled, which HTMLElement lacks —
+  // same reason `save` below is cast.
+  const shotBtn = /** @type {HTMLButtonElement} */ (el('button', 'shot-btn'));
   shotBtn.textContent = 'Take screenshot';
   shotBtn.addEventListener('click', handlers.onTakeScreenshot);
 
