@@ -70,6 +70,19 @@ async function handleMessage(msg) {
       await chrome.tabs.create({ url: msg.url });
       return { ok: true };
 
+    case 'CAPTURE_VIEWPORT': {
+      try {
+        const dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' });
+        return { ok: true, dataUrl };
+      } catch (err) {
+        return {
+          ok: false,
+          message: 'Could not capture this page.',
+          code: 'CAPTURE',
+        };
+      }
+    }
+
     default:
       return { ok: false, message: `Unknown message type: ${msg?.type}` };
   }

@@ -5,6 +5,7 @@
  */
 
 import { createModal, MODAL_CSS } from './modal.js';
+import { selectRegion } from './region-select.js';
 
 const HOST_ID = 'linear-bug-quick-capture-host';
 
@@ -104,8 +105,12 @@ export async function mount() {
   modal = createModal(
     {
       onClose: hide,
-      onTakeScreenshot: () => {
-        // Wired up in Task 7.
+      onTakeScreenshot: async () => {
+        modal?.clearToast();
+        hide(); // keeps modal state in memory; does not unmount
+        const image = await selectRegion();
+        show();
+        if (image) modal?.addImage(image);
       },
       onSave: () => {
         // Wired up in Task 8.
