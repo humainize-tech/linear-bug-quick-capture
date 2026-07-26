@@ -7,12 +7,23 @@
 
 import { getApiKey, setApiKey, clearApiKey } from '../lib/storage.js';
 
-const $ = (/** @type {string} */ id) =>
-  /** @type {HTMLInputElement & HTMLButtonElement & HTMLParagraphElement} */ (
-    document.getElementById(id)
-  );
+/**
+ * Look up a required element. Returns HTMLElement, which covers everything
+ * the callers below need (textContent, className, addEventListener); only
+ * the key field needs a narrower type, and it casts at its own site. Do not
+ * be tempted to have this return an intersection of several element types —
+ * `HTMLInputElement & HTMLButtonElement` collapses `.type` to the button's
+ * literal union and stops type-checking.
+ * @param {string} id
+ * @returns {HTMLElement}
+ */
+function $(id) {
+  const node = document.getElementById(id);
+  if (!node) throw new Error(`Missing element #${id}`);
+  return node;
+}
 
-const keyInput = $('key');
+const keyInput = /** @type {HTMLInputElement} */ ($('key'));
 const status = $('status');
 
 /**
