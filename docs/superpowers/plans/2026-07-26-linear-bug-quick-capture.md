@@ -2716,11 +2716,21 @@ Add near the top, after the other module state:
 const DRAFT_DEBOUNCE_MS = 300;
 /** @type {ReturnType<typeof setTimeout>|undefined} */
 let draftTimer;
+/**
+ * Set once an issue has been created, to stop a debounced save from writing
+ * the draft back after the worker already cleared it. The form fields stay
+ * editable during a save (only the Save button is disabled), so a user
+ * typing mid-upload can arm a timer that would otherwise fire after the
+ * issue exists and resurrect a draft for a bug that was already filed.
+ */
+let draftsFrozen = false;
 
 function scheduleDraftSave() {
+  if (draftsFrozen) return;
   clearTimeout(draftTimer);
   draftTimer = setTimeout(async () => {
-    if (!modal) return;
+    // Re-check: the save may have completed while this timer was pending.
+    if (draftsFrozen || !modal) return;
     const values = modal.getValues();
     const res = await chrome.runtime.sendMessage({
       type: 'SAVE_DRAFT',
@@ -2764,16 +2774,52 @@ After `root.append(modal.element);` at the end of `mount()`, restore any draft:
   if (init.draft) modal.setValues(init.draft);
 ```
 
-And in `onTakeScreenshot`, persist after adding an image so a capture survives a close. Replace the `if (image) … else if (error) …` tail of that handler with the version below — keep the `else if (error)` branch, which is what surfaces a genuine capture failure rather than leaving the user staring at an unchanged form:
+And in `onTakeScreenshot`, persist after adding an image so a capture survives a close. Replace the `if (image) … else if (error) …` tail of that handler with the version below. **Keep the comment as well as the branch** — the `else if` exists because capture failures were previously swallowed in silence, and without the comment a later editor is liable to read the branch as redundant and delete it:
 
 ```js
         if (image) {
           modal?.addImage(image);
           scheduleDraftSave();
-        } else if (error) {
+        }
+        // A cancel yields no error and must stay silent. A real failure —
+        // captureVisibleTab refusing on a restricted page, a crop error, the
+        // extension reloading mid-capture — has to say so, or the user drags
+        // a region and nothing happens with no explanation.
+        else if (error) {
           modal?.showToast(error);
         }
 ```
+
+Finally, stop a pending debounced save from outliving the issue it belongs to. In `onSave` (added in Task 8), cancel any armed timer as the first statement of the handler:
+
+```js
+      onSave: () => {
+        if (!modal) return;
+        clearTimeout(draftTimer); // don't let a queued save outlive this one
+        modal.clearToast();
+```
+
+and freeze drafts in the `DONE` branch, immediately after `settled = true;`:
+
+```js
+          if (msg.type === 'DONE') {
+            settled = true;
+            // The worker has already cleared this origin's draft. Freeze so
+            // nothing writes it back: the fields stay editable during a save,
+            // so a user typing mid-upload can have armed a timer that would
+            // otherwise fire now and resurrect a draft for a filed bug.
+            draftsFrozen = true;
+            clearTimeout(draftTimer);
+            port.disconnect();
+```
+
+and un-freeze in `mount()`, so a re-mounted overlay saves drafts again. Add this next to the draft restore line:
+
+```js
+  draftsFrozen = false;
+```
+
+Note one residual, accepted race: a `SAVE_DRAFT` message already in transit when the worker clears the draft cannot be recalled, because the one-shot message and the `create-issue` port are separate channels with no ordering guarantee between them. The freeze closes every case where the timer has not yet fired, which is the reachable one; the remaining window is sub-millisecond.
 
 - [ ] **Step 4: Type-check**
 
