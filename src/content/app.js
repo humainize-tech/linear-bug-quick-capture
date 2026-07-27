@@ -20,6 +20,47 @@ let successShown = false;
 /** @type {ReturnType<typeof setTimeout>|undefined} */
 let dismissTimer;
 
+/**
+ * Events that must not escape the overlay into the host page.
+ *
+ * A shadow root hides our DOM but does nothing to contain events: the host
+ * element still sits in the page's tree, so anything the user does inside the
+ * overlay retargets at the shadow boundary and then keeps bubbling into the
+ * page's own document-level handlers. Real sites act on that — single-key
+ * search shortcuts swallow keystrokes, and focus traps watching
+ * focusin/focusout pull focus back to their own field mid-sentence, so typing
+ * either vanishes or lands in an unrelated page input.
+ *
+ * Stopping propagation at the host in the BUBBLE phase is the whole trick:
+ * the event has already reached our own field by then, so typing still works
+ * normally, but the page never learns it happened. Nothing here calls
+ * preventDefault, and our Escape handler is unaffected because it listens on
+ * document in the capture phase, which runs before the event gets here.
+ */
+const ISOLATED_EVENTS = [
+  'keydown',
+  'keyup',
+  'keypress',
+  'input',
+  'change',
+  'focusin',
+  'focusout',
+  'paste',
+  'copy',
+  'cut',
+  'pointerdown',
+  'pointerup',
+  'mousedown',
+  'mouseup',
+  'click',
+  'dblclick',
+];
+
+/** @param {Event} e */
+function stopEvent(e) {
+  e.stopPropagation();
+}
+
 const DRAFT_DEBOUNCE_MS = 300;
 /** @type {ReturnType<typeof setTimeout>|undefined} */
 let draftTimer;
@@ -134,6 +175,10 @@ export async function mount() {
   const sheet = new CSSStyleSheet();
   sheet.replaceSync(MODAL_CSS);
   root.adoptedStyleSheets = [sheet];
+
+  // Contain the overlay's own events so the page cannot react to them.
+  // These live on the host and die with it, so unmount() needs no counterpart.
+  for (const type of ISOLATED_EVENTS) host.addEventListener(type, stopEvent);
 
   document.documentElement.append(host);
   document.addEventListener('keydown', onKeydown, true);
