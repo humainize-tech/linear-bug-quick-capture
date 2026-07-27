@@ -97,13 +97,20 @@ export async function fetchViewer() {
  * @returns {Promise<import('../lib/types.js').Project[]>}
  */
 export async function fetchProjects() {
+  // `teams` MUST carry an explicit `first`. Linear costs a query by
+  // multiplying connection page sizes, and an unbounded nested connection is
+  // charged at its maximum (50) — so `projects(first: 250)` with a bare
+  // `teams { nodes { … } }` bills 250 × 50 = 12,500 nodes and comes back
+  // "Query too complex". Bounding teams to 10 brings it to 2,500. A project
+  // spanning more than 10 teams would be truncated here, which no real
+  // workspace does.
   const data = await graphql(`
     query Projects {
       projects(first: 250, filter: { state: { neq: "completed" } }) {
         nodes {
           id
           name
-          teams { nodes { id key name } }
+          teams(first: 10) { nodes { id key name } }
         }
       }
     }
