@@ -22,14 +22,14 @@ export async function setApiKey(key) {
   // The cache is keyed by nothing but time, so a different key's workspace
   // would keep showing the previous key's projects for up to the TTL — and
   // saving against a stale project id yields a raw GraphQL error.
-  // `clearCachedProjects` is a hoisted function declaration below.
-  await clearCachedProjects();
+  // `clearCachedWorkspace` is a hoisted function declaration below.
+  await clearCachedWorkspace();
 }
 
 /** @returns {Promise<void>} */
 export async function clearApiKey() {
   await chrome.storage.local.remove(KEY_API);
-  await clearCachedProjects();
+  await clearCachedWorkspace();
 }
 
 const KEY_PREFS = 'stickyPrefs';
@@ -37,54 +37,76 @@ const KEY_PROJECT_CACHE = 'projectsCache';
 const PROJECT_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
- * @returns {Promise<import('./types.js').Project[]|null>} null when absent or stale.
+ * @returns {Promise<import('./types.js').Workspace|null>} null when absent or stale.
  */
-export async function getCachedProjects() {
+export async function getCachedWorkspace() {
   const out = await chrome.storage.session.get(KEY_PROJECT_CACHE);
   const entry = out[KEY_PROJECT_CACHE];
   if (!entry) return null;
   if (Date.now() - entry.fetchedAt > PROJECT_CACHE_TTL_MS) return null;
-  return entry.projects;
+  // An entry with no `statusesByTeam` was written by a build that predates the
+  // Status field. Treating it as stale rather than returning it is what keeps
+  // an in-place extension upgrade from showing an empty Status dropdown for
+  // the rest of the TTL.
+  if (!entry.statusesByTeam) return null;
+  return { projects: entry.projects, statusesByTeam: entry.statusesByTeam };
 }
 
 /**
- * @param {import('./types.js').Project[]} projects
+ * @param {import('./types.js').Workspace} workspace
  * @returns {Promise<void>}
  */
-export async function setCachedProjects(projects) {
+export async function setCachedWorkspace({ projects, statusesByTeam }) {
   await chrome.storage.session.set({
-    [KEY_PROJECT_CACHE]: { fetchedAt: Date.now(), projects },
+    [KEY_PROJECT_CACHE]: { fetchedAt: Date.now(), projects, statusesByTeam },
   });
 }
 
 /**
- * Drop the project cache. Called on any API key change: the cache carries no
+ * Drop the workspace cache. Called on any API key change: the cache carries no
  * identity of the key that filled it, so it must not outlive one.
  *
  * Declared as a function declaration so it hoists above `setApiKey` /
  * `clearApiKey`, which call it.
  * @returns {Promise<void>}
  */
-export async function clearCachedProjects() {
+export async function clearCachedWorkspace() {
   await chrome.storage.session.remove(KEY_PROJECT_CACHE);
 }
 
 /**
- * @returns {Promise<{lastProjectId: string|null, lastTeamId: string|null}>}
+ * @returns {Promise<{lastProjectId: string|null, lastTeamId: string|null, lastStatusName: string|null}>}
  */
 export async function getStickyPrefs() {
   const out = await chrome.storage.local.get(KEY_PREFS);
-  return out[KEY_PREFS] ?? { lastProjectId: null, lastTeamId: null };
+  const prefs = out[KEY_PREFS] ?? {};
+  // Field-by-field rather than returning the stored object wholesale: a prefs
+  // object written before `lastStatusName` existed would otherwise hand back
+  // `undefined` for it, which is not what the type promises.
+  return {
+    lastProjectId: prefs.lastProjectId ?? null,
+    lastTeamId: prefs.lastTeamId ?? null,
+    lastStatusName: prefs.lastStatusName ?? null,
+  };
 }
 
 /**
+ * The status is remembered by *name*, not id: state ids are team-scoped, so an
+ * id carries no meaning once the next bug goes to a different team, whereas
+ * names like "Triage" and "Backlog" are shared across most teams.
+ *
  * @param {string} projectId
  * @param {string} teamId
+ * @param {string|null} [statusName]
  * @returns {Promise<void>}
  */
-export async function setStickyPrefs(projectId, teamId) {
+export async function setStickyPrefs(projectId, teamId, statusName = null) {
   await chrome.storage.local.set({
-    [KEY_PREFS]: { lastProjectId: projectId, lastTeamId: teamId },
+    [KEY_PREFS]: {
+      lastProjectId: projectId,
+      lastTeamId: teamId,
+      lastStatusName: statusName,
+    },
   });
 }
 

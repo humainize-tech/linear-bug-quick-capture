@@ -91,21 +91,56 @@ export async function fetchViewer() {
 }
 
 /**
- * All active (non-completed) projects visible to the key, with their teams.
- * A team-scoped key simply sees fewer projects, which is the desired
- * behaviour.
- * @returns {Promise<import('../lib/types.js').Project[]>}
+ * Linear groups workflow states by type, then orders within a group by
+ * `position`. The categories themselves are fixed — a team can reorder states
+ * within a category but not the categories — so this list is the whole story.
+ * `duplicate` is a reserved category Linear applies automatically; it is last
+ * in Linear's own ordering.
+ *
+ * `WorkflowState.type` is a bare `String` in the schema, not an enum, so an
+ * unrecognised value sorts last rather than being dropped. A future category
+ * still reaches the dropdown instead of silently vanishing from it.
  */
-export async function fetchProjects() {
-  // `teams` MUST carry an explicit `first`. Linear costs a query by
-  // multiplying connection page sizes, and an unbounded nested connection is
-  // charged at its maximum (50) — so `projects(first: 250)` with a bare
-  // `teams { nodes { … } }` bills 250 × 50 = 12,500 nodes and comes back
-  // "Query too complex". Bounding teams to 10 brings it to 2,500. A project
-  // spanning more than 10 teams would be truncated here, which no real
-  // workspace does.
+const STATE_TYPE_ORDER = [
+  'triage',
+  'backlog',
+  'unstarted',
+  'started',
+  'completed',
+  'canceled',
+  'duplicate',
+];
+
+/** @param {string} type */
+function stateTypeRank(type) {
+  const i = STATE_TYPE_ORDER.indexOf(type);
+  return i === -1 ? STATE_TYPE_ORDER.length : i;
+}
+
+/**
+ * Everything the overlay needs to render its form: all active (non-completed)
+ * projects with their teams, and every team's workflow states. A team-scoped
+ * key simply sees fewer of both, which is the desired behaviour.
+ *
+ * One document rather than two requests: the two root fields are independent,
+ * and the modal cannot render until it has both.
+ * @returns {Promise<import('../lib/types.js').Workspace>}
+ */
+export async function fetchWorkspace() {
+  // Every nested connection MUST carry an explicit `first`. Linear costs a
+  // query by multiplying connection page sizes, and an unbounded nested
+  // connection is charged at its maximum (50) — so `projects(first: 250)`
+  // with a bare `teams { nodes { … } }` bills 250 × 50 = 12,500 nodes and
+  // comes back "Query too complex". Bounding teams to 10 brings that half to
+  // 2,500. A project spanning more than 10 teams would be truncated here,
+  // which no real workspace does.
+  //
+  // `teams` is a second root field, not a nesting under `projects`: nesting
+  // states inside the projects query would bill 250 × 10 × 50 = 125,000 and
+  // fail outright. Side by side the two halves add rather than multiply —
+  // 2,500 + 2,500 = 5,000.
   const data = await graphql(`
-    query Projects {
+    query Workspace {
       projects(first: 250, filter: { state: { neq: "completed" } }) {
         nodes {
           id
@@ -113,9 +148,17 @@ export async function fetchProjects() {
           teams(first: 10) { nodes { id key name } }
         }
       }
+      teams(first: 50) {
+        nodes {
+          id
+          defaultIssueState { id }
+          states(first: 50) { nodes { id name type position } }
+        }
+      }
     }
   `);
-  return data.projects.nodes
+
+  const projects = data.projects.nodes
     .map((/** @type {any} */ p) => ({
       id: p.id,
       name: p.name,
@@ -128,6 +171,31 @@ export async function fetchProjects() {
     .sort((/** @type {any} */ a, /** @type {any} */ b) =>
       a.name.localeCompare(b.name)
     );
+
+  /** @type {Record<string, import('../lib/types.js').TeamStates>} */
+  const statusesByTeam = {};
+  for (const team of data.teams.nodes) {
+    statusesByTeam[team.id] = {
+      defaultStateId: team.defaultIssueState?.id ?? null,
+      states: team.states.nodes
+        .map((/** @type {any} */ s) => ({
+          id: s.id,
+          name: s.name,
+          type: s.type,
+          position: s.position,
+        }))
+        .sort(
+          (
+            /** @type {import('../lib/types.js').WorkflowState} */ a,
+            /** @type {import('../lib/types.js').WorkflowState} */ b
+          ) =>
+            stateTypeRank(a.type) - stateTypeRank(b.type) ||
+            a.position - b.position
+        ),
+    };
+  }
+
+  return { projects, statusesByTeam };
 }
 
 /**
@@ -195,10 +263,16 @@ export async function uploadImage(dataUrl, filename) {
 }
 
 /**
- * @param {{title: string, description: string, teamId: string, projectId: string}} input
+ * @param {{title: string, description: string, teamId: string, projectId: string, stateId?: string|null}} input
  * @returns {Promise<{identifier: string, url: string}>}
  */
-export async function createIssue({ title, description, teamId, projectId }) {
+export async function createIssue({
+  title,
+  description,
+  teamId,
+  projectId,
+  stateId,
+}) {
   const data = await graphql(
     `
       mutation CreateIssue($input: IssueCreateInput!) {
@@ -208,7 +282,12 @@ export async function createIssue({ title, description, teamId, projectId }) {
         }
       }
     `,
-    { input: { title, description, teamId, projectId } }
+    {
+      // Omitted rather than sent as null when the overlay could not resolve a
+      // status — Linear then applies the team's own default, which is the
+      // behaviour this extension had before the Status field existed.
+      input: { title, description, teamId, projectId, ...(stateId ? { stateId } : {}) },
+    }
   );
 
   if (!data.issueCreate?.success || !data.issueCreate.issue) {

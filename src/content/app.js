@@ -88,6 +88,7 @@ function scheduleDraftSave() {
         description: values.description,
         projectId: values.projectId,
         teamId: values.teamId,
+        statusId: values.statusId,
         images: modal.getImages(),
         updatedAt: Date.now(),
       },
@@ -337,6 +338,8 @@ export async function mount() {
             pageUrl: location.href,
             projectId: values.projectId,
             teamId: values.teamId,
+            stateId: values.statusId,
+            statusName: values.statusName,
             images: modal.getImages(),
           },
         });
@@ -352,8 +355,12 @@ export async function mount() {
       onOpenUrl: (url) => chrome.runtime.sendMessage({ type: 'OPEN_URL', url }),
       onChange: scheduleDraftSave,
     },
-    init.projects ?? [],
-    { lastProjectId: init.lastProjectId, lastTeamId: init.lastTeamId }
+    { projects: init.projects ?? [], statusesByTeam: init.statusesByTeam ?? {} },
+    {
+      lastProjectId: init.lastProjectId,
+      lastTeamId: init.lastTeamId,
+      lastStatusName: init.lastStatusName ?? null,
+    }
   );
 
   root.innerHTML = '';

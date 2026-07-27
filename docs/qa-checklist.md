@@ -35,6 +35,28 @@ the Linear client complete. Delete any test issues you create in Linear.
       select again.
 - [ ] The last-used project and team are preselected on reopen.
 
+## Status
+
+Statuses are scoped to **teams** in Linear, not projects, so everything here
+turns on the team the selected project resolves to.
+
+- [ ] With no project selected, Status is disabled and reads "Select a project
+      first".
+- [ ] Selecting a project fills Status with that team's real statuses, in the
+      same order Linear shows them (Triage/Backlog first, Canceled and
+      Duplicate last).
+- [ ] Switching to a project on a **different** team re-populates Status, and
+      keeps the same status **name** if that team has one by that name.
+- [ ] Switching to a team that has no status by that name falls back to that
+      team's own default status.
+- [ ] Picking a status manually and *then* switching project carries the
+      manual pick over — not the status of the last bug you filed.
+- [ ] The status of the last **created** bug is preselected on reopen. File two
+      bugs in a row and confirm the second one starts on the first one's status.
+- [ ] A restored draft comes back with its status.
+- [ ] The created issue actually lands in the chosen status in Linear — check
+      the issue, not just the toast.
+
 ## Capture
 
 - [ ] The modal disappears during selection and the page dims with a crosshair

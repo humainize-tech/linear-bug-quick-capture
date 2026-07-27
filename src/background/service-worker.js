@@ -5,7 +5,7 @@
 
 import {
   fetchViewer,
-  fetchProjects,
+  fetchWorkspace,
   uploadImage,
   createIssue,
   LinearError,
@@ -13,8 +13,8 @@ import {
 import { buildDescription } from '../lib/description.js';
 import {
   getApiKey,
-  getCachedProjects,
-  setCachedProjects,
+  getCachedWorkspace,
+  setCachedWorkspace,
   getStickyPrefs,
   setStickyPrefs,
   getDraft,
@@ -50,11 +50,11 @@ async function handleMessage(msg) {
       const key = await getApiKey();
       if (!key) return { ok: true, hasKey: false };
 
-      let projects = await getCachedProjects();
-      if (!projects) {
+      let workspace = await getCachedWorkspace();
+      if (!workspace) {
         try {
-          projects = await fetchProjects();
-          await setCachedProjects(projects);
+          workspace = await fetchWorkspace();
+          await setCachedWorkspace(workspace);
         } catch (err) {
           const e = /** @type {LinearError} */ (err);
           return { ok: false, hasKey: true, message: e.message, code: e.code };
@@ -65,9 +65,11 @@ async function handleMessage(msg) {
       return {
         ok: true,
         hasKey: true,
-        projects,
+        projects: workspace.projects,
+        statusesByTeam: workspace.statusesByTeam,
         lastProjectId: prefs.lastProjectId,
         lastTeamId: prefs.lastTeamId,
+        lastStatusName: prefs.lastStatusName,
         draft,
       };
     }
@@ -220,9 +222,14 @@ chrome.runtime.onConnect.addListener((port) => {
         description,
         teamId: payload.teamId,
         projectId: payload.projectId,
+        stateId: payload.stateId,
       });
 
-      await setStickyPrefs(payload.projectId, payload.teamId);
+      await setStickyPrefs(
+        payload.projectId,
+        payload.teamId,
+        payload.statusName ?? null
+      );
       await clearDraft(new URL(payload.pageUrl).origin);
       safePost({ type: 'DONE', identifier: issue.identifier, url: issue.url });
     } catch (err) {

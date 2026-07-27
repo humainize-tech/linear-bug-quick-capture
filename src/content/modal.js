@@ -5,7 +5,7 @@
  */
 
 /** @typedef {import('../lib/types.js').CapturedImage} CapturedImage */
-/** @typedef {import('../lib/types.js').Project} Project */
+/** @typedef {import('../lib/types.js').Workspace} Workspace */
 
 export const MAX_IMAGES = 5;
 
@@ -67,12 +67,21 @@ p.note { margin:0 0 10px; color:#6b6b76; }
 
 /**
  * @param {ModalHandlers} handlers
- * @param {Project[]} projects
- * @param {{lastProjectId: string|null, lastTeamId: string|null}} prefs
+ * @param {Workspace} workspace
+ * @param {{lastProjectId: string|null, lastTeamId: string|null, lastStatusName: string|null}} prefs
  */
-export function createModal(handlers, projects, prefs) {
+export function createModal(handlers, { projects, statusesByTeam }, prefs) {
   /** @type {CapturedImage[]} */
   let images = [];
+
+  /**
+   * The status name to reach for whenever the options are rebuilt. Seeded from
+   * the last created bug, then reassigned on every manual pick — so choosing
+   * "In Progress" and then switching project carries that choice across,
+   * rather than snapping back to whatever was last filed.
+   * @type {string|null}
+   */
+  let preferredStatusName = prefs.lastStatusName;
 
   const panel = el('div', 'panel');
 
@@ -111,6 +120,10 @@ export function createModal(handlers, projects, prefs) {
   );
   teamSelect.classList.add('hidden');
 
+  const statusSelect = /** @type {HTMLSelectElement} */ (
+    document.createElement('select')
+  );
+
   const noProjects = el('p', 'note hidden');
   noProjects.textContent =
     'No projects found. Your API key may be scoped to teams without projects.';
@@ -127,6 +140,29 @@ export function createModal(handlers, projects, prefs) {
   }
 
   /**
+   * The single team this issue would be filed against, or null when no
+   * project is selected. A single-team project needs no visible Team select,
+   * so the id comes from the project itself in that case.
+   * @returns {string|null}
+   */
+  function resolvedTeamId() {
+    const project = projects.find((p) => p.id === projectSelect.value);
+    if (!project) return null;
+    if (project.teams.length === 1) return project.teams[0].id;
+    return teamSelect.value || null;
+  }
+
+  /**
+   * The currently selected status's name, or null when the select is in its
+   * disabled placeholder state.
+   * @returns {string|null}
+   */
+  function selectedStatusName() {
+    if (statusSelect.disabled || !statusSelect.value) return null;
+    return statusSelect.selectedOptions[0]?.textContent ?? null;
+  }
+
+  /**
    * A project may span several teams, but an issue needs exactly one. Show
    * the team select only when the choice is genuinely ambiguous.
    */
@@ -137,6 +173,7 @@ export function createModal(handlers, projects, prefs) {
     if (!project || project.teams.length <= 1) {
       teamSelect.classList.add('hidden');
       teamLabel.classList.add('hidden');
+      syncStatusSelect();
       return;
     }
     for (const t of project.teams) {
@@ -146,6 +183,45 @@ export function createModal(handlers, projects, prefs) {
     teamSelect.value = sticky ? sticky.id : project.teams[0].id;
     teamSelect.classList.remove('hidden');
     teamLabel.classList.remove('hidden');
+    syncStatusSelect();
+  }
+
+  /**
+   * Rebuild the status options for whichever team the project resolves to.
+   * Linear scopes workflow states to teams, so this has to re-run on every
+   * change to Project or Team, not just on open.
+   *
+   * Unlike Team, the select is disabled rather than hidden when there is
+   * nothing to offer: Team is genuinely irrelevant for a single-team project,
+   * whereas Status always applies, and a field that comes and goes makes the
+   * whole panel jump.
+   */
+  function syncStatusSelect() {
+    const teamId = resolvedTeamId();
+    const entry = teamId ? statusesByTeam[teamId] : undefined;
+    statusSelect.innerHTML = '';
+
+    if (!entry?.states.length) {
+      statusSelect.append(
+        optionEl('', teamId ? 'No statuses available' : 'Select a project first')
+      );
+      statusSelect.disabled = true;
+      return;
+    }
+
+    for (const s of entry.states) statusSelect.append(optionEl(s.id, s.name));
+    statusSelect.disabled = false;
+
+    // Name first, so a status carries to a team that has one by the same
+    // name; then the team's own default; then whatever sorts first.
+    const byName = preferredStatusName
+      ? entry.states.find(
+          (s) => s.name.toLowerCase() === preferredStatusName?.toLowerCase()
+        )
+      : undefined;
+    const fallback =
+      entry.states.find((s) => s.id === entry.defaultStateId) ?? entry.states[0];
+    statusSelect.value = (byName ?? fallback).id;
   }
 
   projectSelect.addEventListener('change', () => {
@@ -155,7 +231,14 @@ export function createModal(handlers, projects, prefs) {
     setFieldError('project', null);
     handlers.onChange();
   });
-  teamSelect.addEventListener('change', handlers.onChange);
+  teamSelect.addEventListener('change', () => {
+    syncStatusSelect();
+    handlers.onChange();
+  });
+  statusSelect.addEventListener('change', () => {
+    preferredStatusName = selectedStatusName();
+    handlers.onChange();
+  });
   nameInput.addEventListener('input', () => {
     setFieldError('title', null);
     handlers.onChange();
@@ -180,6 +263,7 @@ export function createModal(handlers, projects, prefs) {
     labelEl('Description'), descInput,
     labelEl('Project'), projectSelect, projectErr, noProjects,
     teamLabel, teamSelect,
+    labelEl('Status'), statusSelect,
     shotBtn, shots
   );
 
@@ -282,16 +366,13 @@ export function createModal(handlers, projects, prefs) {
     element: panel,
 
     getValues() {
-      const project = projects.find((p) => p.id === projectSelect.value);
-      const teamId =
-        project && project.teams.length === 1
-          ? project.teams[0].id
-          : teamSelect.value || null;
       return {
         title: nameInput.value.trim(),
         description: descInput.value,
         projectId: projectSelect.value || null,
-        teamId,
+        teamId: resolvedTeamId(),
+        statusId: statusSelect.disabled ? null : statusSelect.value || null,
+        statusName: selectedStatusName(),
       };
     },
 
@@ -307,7 +388,23 @@ export function createModal(handlers, projects, prefs) {
         const has = Array.from(teamSelect.options).some(
           (o) => o.value === draft.teamId
         );
-        if (has) teamSelect.value = draft.teamId;
+        if (has) {
+          teamSelect.value = draft.teamId;
+          // The team the draft names may not be the one syncTeamSelect just
+          // picked, and the status options belong to the team.
+          syncStatusSelect();
+        }
+      }
+      if (draft.statusId) {
+        const has = Array.from(statusSelect.options).some(
+          (o) => o.value === draft.statusId
+        );
+        if (has) {
+          statusSelect.value = draft.statusId;
+          // Restoring a draft is as much a deliberate choice as picking from
+          // the dropdown, so it seeds the preference the same way.
+          preferredStatusName = selectedStatusName();
+        }
       }
       images = (draft.images ?? []).slice(0, MAX_IMAGES);
       renderShots();

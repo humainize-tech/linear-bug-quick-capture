@@ -45,16 +45,29 @@ to `{ defaultStateId: string|null, states: WorkflowState[] }`.
 `color` is deliberately not fetched: a native `<select>` cannot render
 per-option colour portably, so it would be dead weight on every request.
 
-**Ordering.** Linear groups states by type and orders within a group by
-`position`. Sort by
+**Ordering.** Linear groups states by category and orders within a category by
+`position`. Teams can reorder states within a category but the categories
+themselves are fixed, so sorting by
 
 ```js
-['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled']
+['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled', 'duplicate']
 ```
 
-then by `position` ascending. That reproduces the order shown in Linear. A
-state whose type is not in the list sorts last rather than being dropped, so an
-unfamiliar future type still appears.
+then by `position` ascending reproduces the order shown in Linear. `duplicate`
+is a reserved category Linear applies automatically when an issue is marked as
+a duplicate.
+
+`WorkflowState.type` is a bare `String` in the schema rather than an enum, so a
+state whose type is not in the list sorts last rather than being dropped — an
+unfamiliar future category still reaches the dropdown.
+
+**Schema verification.** All field names were checked against Linear's own
+published schema (`linear/linear`, `packages/sdk/src/schema.graphql`):
+`Team.defaultIssueState: WorkflowState` (nullable), `Team.states(first: Int)`
+(with `includeArchived` defaulting to false), `WorkflowState { id name type
+position }`, and `IssueCreateInput.stateId: String` (optional). This matters
+more than usual: both halves share one document, so a wrong field name in the
+teams half would break project loading too.
 
 **Query complexity.** 250 x 10 = 2,500 for projects, 50 x 50 = 2,500 for teams,
 5,000 total — the same order as today's query and well under the ceiling. Both
