@@ -105,7 +105,7 @@ The content script and service worker are the main seam. One-shot messages via
 | Message | Response |
 | --- | --- |
 | `{type:'PING'}` | `{ok:true}` — used to detect an already-mounted overlay |
-| `{type:'GET_INIT', origin}` | `{hasKey, projects, lastProjectId, lastTeamId, draft}` |
+| `{type:'GET_INIT', origin}` | `{hasKey, projects, statusesByTeam, lastProjectId, lastTeamId, lastStatusName, draft}` |
 | `{type:'CAPTURE_VIEWPORT'}` | `{dataUrl}` — full visible viewport PNG |
 | `{type:'SAVE_DRAFT', origin, draft}` | `{ok:true}` |
 | `{type:'DISCARD_DRAFT', origin}` | `{ok:true}` |
@@ -138,20 +138,38 @@ on the first implementation step — it is the single most likely cause of a bla
 query { viewer { id name email organization { name } } }
 ```
 
-### 3.2 Project list
+### 3.2 Workspace query
+
+One document fetches everything the overlay needs to render its form:
 
 ```graphql
-query {
+query Workspace {
   projects(first: 250, filter: { state: { neq: "completed" } }) {
-    nodes { id name teams { nodes { id key name } } }
+    nodes { id name teams(first: 10) { nodes { id key name } } }
+  }
+  teams(first: 50) {
+    nodes {
+      id
+      defaultIssueState { id }
+      states(first: 50) { nodes { id name type position } }
+    }
   }
 }
 ```
 
-Returns all active workspace projects with their teams. A key restricted to specific teams
-returns only what it can see, which is the desired behavior. The exact filter argument shape
-and whether `Project.teams` is a connection must be confirmed by schema introspection before
-coding against it; if the filter is not supported, fetch unfiltered and filter client-side.
+Returns all active workspace projects with their teams, plus every team's workflow states. A
+key restricted to specific teams returns only what it can see, which is the desired behavior.
+
+**Every nested connection must carry an explicit `first`.** Linear costs a query by multiplying
+connection page sizes, and an unbounded nested connection is billed at its maximum of 50 — so a
+bare `teams { nodes { … } }` under `projects(first: 250)` bills 250 × 50 = 12,500 and returns
+"Query too complex". Bounding teams to 10 brings that half to 2,500.
+
+**`teams` is a second root field, not a nesting.** Nesting states under the projects query would
+bill 250 × 10 × 50 = 125,000 and fail outright. Side by side the two halves add rather than
+multiply: 2,500 + 2,500 = 5,000.
+
+Statuses are scoped to **teams**, never to projects — see §5.
 
 ### 3.3 Issue creation
 
@@ -164,8 +182,13 @@ mutation CreateIssue($input: IssueCreateInput!) {
 }
 ```
 
-Input: `{ title, description, teamId, projectId }`. `teamId` is required by Linear — every issue
-belongs to exactly one team — which is why §5 resolves a team from the chosen project.
+Input: `{ title, description, teamId, projectId, stateId? }`. `teamId` is required by Linear —
+every issue belongs to exactly one team — which is why §5 resolves a team from the chosen
+project.
+
+`stateId` is optional and is **omitted rather than sent as null** when the overlay cannot
+resolve a status; Linear then applies the team's own default status, which is the behavior this
+extension had before the Status field existed.
 
 ### 3.4 Screenshot upload
 
@@ -240,8 +263,8 @@ States:
 - **needs-key** — "Add your Linear API key to get started" plus an *Open settings* button that
   messages the worker to open the options page.
 - **form** — Title (text), Description (textarea, markdown passed through as typed), Project
-  (select), Team (select, conditional — see §5), a *Take screenshot* button, a thumbnail strip,
-  and a footer with *Discard draft* and *Save bug*.
+  (select), Team (select, conditional — see §5), Status (select, always shown — see §5), a
+  *Take screenshot* button, a thumbnail strip, and a footer with *Discard draft* and *Save bug*.
 - **saving** — Save disabled, label shows `Uploading 2 of 3…` then `Creating issue…`.
 - **success** — `BUG-123 created` with a link, auto-dismissing and unmounting after 3 seconds.
   Clicking the link messages the worker to `chrome.tabs.create` the issue URL rather than
@@ -303,7 +326,7 @@ screenshot* disables with an explanatory tooltip.
    still populated**, and re-enables Save. Nothing is cleared and no draft is discarded, so the
    user can fix the problem and retry.
 
-## 5. Project and team resolution
+## 5. Project, team, and status resolution
 
 Linear requires a `teamId` on every issue, but a project may belong to several teams. So:
 
@@ -312,11 +335,44 @@ Linear requires a `teamId` on every issue, but a project may belong to several t
   stays hidden**.
 - If the project has more than one team, the Team select appears, populated with just that
   project's teams, preselected to the sticky team if it is among them and otherwise the first.
-- Both project and team are persisted as sticky preferences on successful save.
+- Project, team, and status are persisted as sticky preferences on successful save.
 
-The project list is cached in `chrome.storage.session` with a 5-minute TTL so reopening the
-modal is instant rather than re-fetching. A stale-cache miss is harmless; worst case a
-just-created project is missing for five minutes.
+### Status
+
+**Workflow states belong to teams, not projects.** Each team defines its own set and can
+rename, reorder, and add to it; a project has none of its own, so a project spanning two teams
+offers two different sets. The Status options therefore follow whichever team the project
+resolves to above, and rebuild on any change to Project or Team.
+
+All of the team's states are offered, ordered as Linear orders them: by category
+
+```js
+['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled', 'duplicate']
+```
+
+then by `position` ascending. Teams can reorder states within a category but the categories are
+fixed. `WorkflowState.type` is a bare `String` rather than an enum, so an unrecognized category
+sorts last rather than being dropped.
+
+Preselection order is: the preferred status **name**, matched case-insensitively; then the
+team's `defaultIssueState`; then whatever sorts first. The preferred name is seeded from the
+last created bug and reassigned on every manual pick, so a deliberate choice carries across a
+project switch instead of snapping back to the last filed status.
+
+Stickiness stores a **name, not an id** — state ids are team-scoped and mean nothing in the next
+team, whereas names like Backlog and Triage are shared across most teams.
+
+Unlike Team, the Status select is disabled rather than hidden when it has nothing to offer
+(no project chosen, or a scoped key that cannot see the team's states). Team is genuinely
+irrelevant for a single-team project; Status always applies, and a field that comes and goes
+makes the panel jump.
+
+### Caching
+
+The workspace — projects and per-team statuses together — is cached in `chrome.storage.session`
+with a 5-minute TTL so reopening the modal is instant rather than re-fetching. A stale-cache
+miss is harmless; worst case a just-created project is missing for five minutes. The cache is
+also dropped on any API key change, since it carries no identity of the key that filled it.
 
 ## 6. Data and storage model
 
@@ -329,11 +385,26 @@ just-created project is missing for five minutes.
  */
 
 /**
+ * @typedef {Object} WorkflowState
+ * @property {string} id
+ * @property {string} name
+ * @property {string} type       'triage'|'backlog'|'unstarted'|'started'|…
+ * @property {number} position
+ */
+
+/**
+ * @typedef {Object} TeamStates
+ * @property {string|null} defaultStateId
+ * @property {WorkflowState[]} states   ordered as Linear orders them
+ */
+
+/**
  * @typedef {Object} Draft
  * @property {string} title
  * @property {string} description
  * @property {string|null} projectId
  * @property {string|null} teamId
+ * @property {string|null} statusId
  * @property {CapturedImage[]} images
  * @property {number} updatedAt   epoch ms, used for LRU eviction
  */
@@ -345,16 +416,26 @@ just-created project is missing for five minutes.
  * @property {string} pageUrl
  * @property {string} projectId
  * @property {string} teamId
+ * @property {string|null} stateId
+ * @property {string|null} statusName
  * @property {CapturedImage[]} images
  */
 ```
 
+`statusName` rides along beside `stateId` so the worker can write the sticky preference without
+re-reading the workspace cache, which may have expired or been evicted while the save was in
+flight.
+
 | Key | Area | Contents |
 | --- | --- | --- |
 | `apiKey` | `storage.local` | Linear personal API key |
-| `lastProjectId`, `lastTeamId` | `storage.local` | sticky preferences |
+| `stickyPrefs` | `storage.local` | `{lastProjectId, lastTeamId, lastStatusName}` |
 | `draft:<origin>` | `storage.session` | a `Draft` |
-| `projectsCache` | `storage.session` | `{fetchedAt, projects}` |
+| `projectsCache` | `storage.session` | `{fetchedAt, projects, statusesByTeam}` |
+
+An entry in `projectsCache` with no `statusesByTeam` is treated as stale. That is the shape an
+in-place extension upgrade leaves behind, and without the guard the Status dropdown would come
+up empty for the rest of the TTL.
 
 **Drafts are keyed by `location.origin`** and live in `chrome.storage.session`: memory-only,
 never written to disk, wiped when Chrome quits. A draft written on one tab restores in any
@@ -457,12 +538,23 @@ mocked `fetch` would have caught.
 12. Restricted page (`chrome://extensions`) → `!` badge with tooltip, no crash.
 13. Screenshots render inline in the created Linear issue, and the URL line is correct.
 
-## 11. Open items for the first implementation step
+## 11. Contract details — resolved
 
-These are contract details to confirm by introspecting Linear's schema and running against a
-live key, before building on top of them:
+These were open questions before the first implementation step. All four are now settled by
+shipped, running code; they are kept here because each answer is load-bearing and non-obvious.
 
-1. Whether personal API keys use a bare `Authorization` header or a `Bearer` prefix.
-2. Exact `fileUpload` mutation and response field names.
-3. The host of the returned signed upload URL, so the manifest can be narrowed to it.
-4. The `projects` query filter argument shape and whether `Project.teams` is a connection.
+1. **Personal API keys are sent bare**, with no `Bearer` prefix. See the comment in
+   `linear-api.js`.
+2. **`fileUpload` contract**: returns `uploadFile { uploadUrl, assetUrl, headers { key value } }`.
+   Every returned header is part of the signature, the signed URL expires 60 seconds after it is
+   issued, and uploads must therefore run strictly sequentially — never `Promise.all`.
+3. **Signed upload URL hosts** are `uploads.linear.app` and `storage.googleapis.com`; both are
+   narrowed in `host_permissions` alongside `api.linear.app`.
+4. **The `projects` filter shape is `filter: { state: { neq: "completed" } }`, and
+   `Project.teams` is a connection** — as is `Team.states`. Both must carry an explicit `first`;
+   see §3.2 for why an unbounded nested connection returns "Query too complex".
+
+Field names in §3.2 and §3.3 were verified against Linear's own published schema
+(`linear/linear`, `packages/sdk/src/schema.graphql`): `Team.defaultIssueState` (nullable),
+`Team.states(first: Int)` with `includeArchived` defaulting to false, `WorkflowState { id name
+type position }`, and `IssueCreateInput.stateId: String` (optional).
