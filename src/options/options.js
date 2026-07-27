@@ -95,7 +95,7 @@ $('reset-sticky').addEventListener('click', async () => {
   // rename there would leave this button silently doing nothing, since
   // removing a non-existent key is not an error.
   await clearStickyPrefs();
-  setStatus('Remembered project reset.', 'ok');
+  setStatus('Remembered project, team, and status reset.', 'ok');
 });
 
 load();
