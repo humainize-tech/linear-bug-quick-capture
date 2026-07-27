@@ -360,6 +360,9 @@ export async function mount() {
   root.append(modal.element);
   draftsFrozen = false;
   if (init.draft) modal.setValues(init.draft);
+  // After setValues, so the caret lands after any restored text. Must be after
+  // the append too — focus() on a detached element is a no-op.
+  modal.focusTitle();
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

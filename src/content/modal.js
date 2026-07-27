@@ -191,6 +191,10 @@ export function createModal(handlers, projects, prefs) {
   const spacer = el('div', 'spacer');
   const save = /** @type {HTMLButtonElement} */ (el('button', 'primary'));
   save.textContent = 'Save bug';
+  // setBusy() rewrites textContent but never title, so this survives a save.
+  save.title = /Mac/i.test(navigator.userAgent)
+    ? 'Save bug (⌘ + Return)'
+    : 'Save bug (Ctrl + Enter)';
   save.addEventListener('click', handlers.onSave);
   foot.append(discard, spacer, save);
 
@@ -206,6 +210,22 @@ export function createModal(handlers, projects, prefs) {
   const toastSlot = el('div', 'toast-slot');
 
   panel.append(head, body, foot, toastSlot);
+
+  // Cmd/Ctrl+Enter submits, so a bug can be filed without reaching for the
+  // mouse. Scoped to the panel rather than to document on purpose: plenty of
+  // sites bind Cmd+Enter themselves (send, comment, run), and while focus is
+  // in the page the page should keep owning its own shortcut. `focusTitle()`
+  // below is what makes this live the moment the overlay opens.
+  //
+  // Deferring to `save.disabled` covers three states for free: a save already
+  // in flight, the no-projects state above, and the success panel — after
+  // which the button stays disabled, so a stray Cmd+Enter cannot double-file.
+  panel.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey)) return;
+    if (save.disabled) return;
+    e.preventDefault();
+    handlers.onSave();
+  });
 
   /**
    * A function declaration (not just a method on the returned object) so the
@@ -301,6 +321,19 @@ export function createModal(handlers, projects, prefs) {
     },
 
     getImages: () => images,
+
+    /**
+     * Put the caret in the name field. Called once the panel is in the DOM —
+     * focus() on a detached element does nothing. Beyond being the obvious
+     * thing to want after clicking the toolbar icon, this is what makes the
+     * panel-scoped Cmd/Ctrl+Enter shortcut usable without a click first.
+     */
+    focusTitle() {
+      nameInput.focus();
+      // Caret to the end, so a restored draft is appended to, not overwritten.
+      const end = nameInput.value.length;
+      nameInput.setSelectionRange(end, end);
+    },
 
     clear() {
       nameInput.value = '';
