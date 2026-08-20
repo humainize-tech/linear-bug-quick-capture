@@ -25,15 +25,11 @@ case it's useful to someone else.
 
 ## Demo
 
-<!-- TODO: embed the walkthrough video here.
-     GitHub renders MP4/MOV uploaded directly to a release or issue — drag the file into any
-     GitHub comment box, then paste the resulting URL on its own line below.
-     For a YouTube video, use a linked thumbnail instead:
-     [![Watch the walkthrough](https://img.youtube.com/vi/VIDEO_ID/maxresdefault.jpg)](https://youtu.be/VIDEO_ID) -->
 
-*A short video walkthrough is coming — check back shortly.*
 
-<!-- TODO: add a screenshot or GIF of the capture panel and a region selection -->
+https://github.com/user-attachments/assets/e204e577-db7f-4d4f-b2c4-39693cc3e875
+
+
 
 ## Features
 
